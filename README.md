@@ -1,5 +1,4 @@
 Learning MIT 6.824 distributed system engineering
-
 ===
 
 This repository contains lecture content and learning notes about [MIT 6.824 Distributed System 2018](http://nil.csail.mit.edu/6.824/2018/general.html)
@@ -10,6 +9,16 @@ This repository contains lecture content and learning notes about [MIT 6.824 Dis
 - Follow [schecule of 2018](http://nil.csail.mit.edu/5.824/2018/schedule.html)
 
 For more information about this lesson, check [course website](http://nil.csail.mit.edu/6.824/2018/general.html)
+
+### Copyright
+
+All original lecture contents belongs to MIT 6.824 lecturers and TAs.
+
+### Acknowledgement
+
+Many thanks to lecture staff. Thank you for having and sharing this wonderful lecture.
+
+---
 
 這個專案儲存 [MIT 6.824 分散式系統編程](http://nil.csail.mit.edu/6.824/2018/general.html)的上課內容，我將內容翻譯程中文，加上個人學習筆記
 
@@ -32,15 +41,11 @@ MIT 6.824 課程已行之有年，如了核心技術外，每一年都會選取�
 
 本專案會遵守課堂規約，隱藏實做課的完整原始碼
 
-### Copyright
-
-all original lecture contents belongs to MIT 6.824 lecturers and TAs
+### 內容版權
 
 原始教學內容的版權，都屬於 MIT 6.824 課程教職員
 
-### Acknowledgement
-
-Many thanks to lecture staff. Thank you for having and sharing this wonderful lecture.
+### 致謝
 
 十分感謝教職員開設有意義的課程，並且願意將上課內容分享於網路上
 
