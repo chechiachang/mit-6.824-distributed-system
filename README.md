@@ -20,7 +20,7 @@ Many thanks to lecture staff. Thank you for having and sharing this wonderful le
 
 ---
 
-MIT 6.824 分散式系統編成學習筆記
+MIT 6.824 分散式系統編程學習筆記
 ===
 
 這個專案儲存 [MIT 6.824 分散式系統編程](http://nil.csail.mit.edu/6.824/2018/general.html)的上課內容，我將內容翻譯程中文，加上個人學習筆記
