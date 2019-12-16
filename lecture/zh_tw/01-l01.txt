@@ -88,76 +88,76 @@ http://pdos.csail.mit.edu/6.824
 
 本日課程
 
-This is a course about infrastructure, to be used by applications.
-  About abstractions that hide distribution from applications.
-  Three big kinds of abstraction:
-    Storage.
-    Communication.
-    Computation.
-  [diagram: users, application servers, storage servers]
+這門課是關於應用(applications)底下的基礎設施(infrastructure)
+  關於應用端不會察覺底層是分散式，的這層抽象(abstraction)
+  抽象分為三種類別
+    儲存(storage)
+    溝通(communication)
+    運算(computatio)
+  [流程圖: users, 應用 servers, 儲存 servers]
 
-A couple of topics come up repeatedly.
+幾個議題會一直重複出現
 
-Topic: implementation
-  RPC, threads, concurrency control.
+議題: 實做
+  RPC, 執行緒(threads), 併發控制(concurrency control)
 
-Topic: performance
-  The dream: scalable throughput.
-    Nx servers -> Nx total throughput via parallel CPU, disk, net.
-    So handling more load only requires buying more computers.
-  Scaling gets harder as N grows:
-    Load im-balance, stragglers.
-    Non-parallelizable code: initialization, interaction.
-    Bottlenecks from shared resources, e.g. network.
-  Note that some performance problems aren't easily attacked by scaling
-    e.g. decreasing response time for a single user request
-    might require programmer effort rather than just more computers
+議題: 效能(performance)
+  理想: 可擴展的流通量(throughput)
+    N 倍 servers -> 平行化 CPU, 硬碟，網路，產生N 倍的流通量
+    買更多機器就能處理更多負載(load)
+  隨著 N 增加，擴展越來越困難
+    負載不均衡(load im-balance), 落後的server (straggler)
+    無法平行化(Non-parallelizable)的原始碼，初始化(initialization)，互動(interaction)
+    共享資源(e.g. 網路)造成瓶頸(bottlenecks)
+  注意有些效能問題，無法輕易用擴展處理
+    e.g. 降低單一使用者的回應時間
+    可能會需要工程師更努力，而非更多機器
 
-Topic: fault tolerance
-  1000s of servers, complex net -> always something broken
-  We'd like to hide these failures from the application.
-  We often want:
-    Availability -- app can make progress despite failures
-    Durability -- app will come back to life when failures are repaired
-  Big idea: replicated servers.
-    If one server crashes, client can proceed using the other(s).
+議題: 容錯(fault tolerance)
+  1000s 機器，複雜的網路 -> 總會有東西壞掉
+  希望隱藏錯誤，讓應用層不會發現
+  通常需要:
+    可用性(Availability) -- 應用仍然可以使用，雖然底下有東西壞掉
+    持久性(Durability) -- 如果錯誤修復了，應用會復原
+  巨觀想法: 伺服器複本(replicated servers)
+    如果一台壞了，客戶端可以使用其他台繼續工作
 
-Topic: consistency
-  General-purpose infrastructure needs well-defined behavior.
-    E.g. "Get(k) yields the value from the most recent Put(k,v)."
-  Achieving good behavior is hard!
-    "Replica" servers are hard to keep identical.
-    Clients may crash midway through multi-step update.
-    Servers crash at awkward moments, e.g. after executing but before replying.
-    Network may make live servers look dead; risk of "split brain".
-  Consistency and performance are enemies.
-    Consistency requires communication, e.g. to get latest Put().
-    "Strong consistency" often leads to slow systems.
-    High performance often imposes "weak consistency" on applications.
-  People have pursued many design points in this spectrum.
+議題: 一致性(consistency)
+  通用的基礎設施，需要有完整定義的良好行為(well-defined behavior)
+    E.g. "Get(k) 產生的值，來自最近一次 Put(k,v)"
+  良好行為很難達到
+    "副本"伺服器很難保持完全一樣
+    多個步驟的更新，客戶端可能死在其中一步
+    伺服器死在奇怪的時間點，e.g. 執行完成，但來不及回應就死了
+    網路可能讓正常的伺服器，看起來死了(造成多頭馬車風險)
+  一致性與效能是敵人
+    一致性仰賴溝通(communication), e.g. 取得最新的 Put()
+    強一致性(strong consistency) 通常導致系統緩慢
+    高效能可能在應用層產生弱一致性(weak consistency)
+  人類在這兩端光譜中間,追求設計點
 
-CASE STUDY: MapReduce
+實例研究(case study): MapReduce
 
-Let's talk about MapReduce (MR) as a case study
-  MR is a good illustration of 6.824's main topics
-  and is the focus of Lab 1
+我們來談 MapReduce(MR) 作為研究實例
+  MR 很好的展示 6.824 課程的主要議題
+  這也是實做 1 的焦點
 
-MapReduce overview
-  context: multi-hour computations on multi-terabyte data-sets
-    e.g. analysis of graph structure of crawled web pages
-    only practical with 1000s of computers
-    often not developed by distributed systems experts
-    distribution can be very painful, e.g. coping with failure
-  overall goal: non-specialist programmers can easily split
-    data processing over many servers with reasonable efficiency.
-  programmer defines Map and Reduce functions
-    sequential code; often fairly simple
-  MR runs the functions on 1000s of machines with huge inputs
-    and hides details of distribution
+MapReduce 簡介
+  背景: 針對上 TBs 資料級進行多個小時的運算
+    e.g. 分析爬蟲(crawler) 所得的網站圖片內容
+    只能仰賴 1000s 台伺服器
+    應用程式的開發，往往不是分散式系統專家
+    分散式很痛苦，e.g. 應付錯誤
+  整體目標: 不是分散式專家，也能分割運算
+    使用很多伺服器分散資料運算，達到效能
+  工程師設計 Map 與 Reduce functions
+    有序的(sequential) 原始碼，一般十分簡單
+  MR 將 functions 分散在 1000s 機器上執行，產生巨量的輸入
+    (對應用端)隱藏分散式的細節
 
-Abstract view of MapReduce
-  input is divided into M files
-  [diagram: maps generate rows of K-V pairs, reduces consume columns]
+MapReduce 的抽象
+  輸入(input) 分成 M 個檔案
+  [流程圖: maps 產生一行行 K-V pairs, reduces 一列一列消化]
   Input1 -> Map -> a,1 b,1 c,1
   Input2 -> Map ->     b,1
   Input3 -> Map -> a,1     c,1
@@ -165,158 +165,160 @@ Abstract view of MapReduce
                     |   |   -> Reduce -> c,2
                     |   -----> Reduce -> b,2
                     ---------> Reduce -> a,2
-  MR calls Map() for each input file, produces set of k2,v2
-    "intermediate" data
-    each Map() call is a "task"
-  MR gathers all intermediate v2's for a given k2,
-    and passes them to a Reduce call
-  final output is set of <k2,v3> pairs from Reduce()
-    stored in R output files
-  [diagram: MapReduce API --
-   map(k1, v1) -> list(k2, v2)
-   reduce(k2, list(v2) -> list(k2, v3)]
+  每個 input 檔案，MR Map() 一次，產生一組 k2, v2
+    中介(intermediate) 資料
+    每個 Map() call 是一個 "task" 
+  MR 針對 k2，收集所有中介的 v2
+    將 v2 們傳給 Recuce call
+  最終輸出 Reduce() 產生的一組 <k2, v3>
+    存在 R 輸出檔案
+  [流程圖: MapReduce API --
+    map(k1, v1) -> list(k2, v2)
+    reduce(k2, list(v2)) -> list(k2, v3)
+  ]
 
-Example: word count
-  input is thousands of text files
+範例: 計算字詞數量(word count)
+  輸入: 成千的文本(text)檔案
   Map(k, v)
-    split v into words
+    將 v 拆成一個一個 word
     for each word w
       emit(w, "1")
   Reduce(k, v)
     emit(len(v))
 
-MapReduce hides many painful details:
+MapReduce 隱藏了痛苦的細節:
   starting s/w on servers
-  tracking which tasks are done
-  data movement
-  recovering from failures
+  追蹤每個 task 是否完成
+  資料的移動路徑
+  從錯誤中復原
 
-MapReduce scales well:
-  N computers gets you Nx throughput.
-    Assuming M and R are >= N (i.e., lots of input files and map output keys).
-    Maps()s can run in parallel, since they don't interact.
-    Same for Reduce()s.
-    The only interaction is via the "shuffle" in between maps and reduces.
-  So you can get more throughput by buying more computers.
-    Rather than special-purpose efficient parallelizations of each application.
-    Computers are cheaper than programmers!
+MapReduce 容易擴展:
+  N 計算機產生 Nx 流通量
+    假設 M 與 R >= N(i.e. 很多 input 檔案，與需要 map 輸出的 keys)
+    Map()s 可以平行(parallel)運行，因為 Map() 彼此不互動
+    Reduce() 也是
+    唯一的互動是在 maps 與 reduces 中洗牌(shuffle)
+  所以買機器就可以增加流通量
+    比起工程師針對每一個應用，都去做平性化處理，MapReduce 好很多
+    機器比工程師便宜很多!
 
-What will likely limit the performance?
-  We care since that's the thing to optimize.
+什麼導致效能上限
+  我們在意這點，這就是需要優化的地方
   CPU? memory? disk? network?
-  In 2004 authors were limited by "network cross-section bandwidth".
-    [diagram: servers, tree of network switches]
-    Note all data goes over network, during Map->Reduce shuffle.
-    Paper's root switch: 100 to 200 gigabits/second
-    1800 machines, so 55 megabits/second/machine.
-    Small, e.g. much less than disk (~50-100 MB/s at the time) or RAM speed.
-  So they cared about minimizing movement of data over the network.
-    (Datacenter networks are much faster today.)
+  在 2004 論文作者被『網路帶寬』(network cross-section bandwidth)限制
+    [流程圖: 伺服器, 交換器的樹狀網路]
+    注意在 Map->Reduce 的洗牌中，所有資料流動都透過網路
+    論文的交換機: 100 到 200 Gbit/s
+    1800s 機器, 所以每台機器分到 55Mbit/s
+    很小, e.g. 相對當時的硬碟速度(~50-100/MB/s) 以及 RAM 速度
+  所以論文作者在意，盡量減低透過網路搬動資料
+    (現在資料中心的網路速度已經快很多)
 
-More details (paper's Figure 1):
-  master: gives tasks to workers; remembers where intermediate output is
-  M Map tasks, R Reduce tasks
-  input stored in GFS, 3 copies of each Map input file
-  all computers run both GFS and MR workers
-  many more input tasks than workers
-  master gives a Map task to each worker
-    hands out new tasks as old ones finish
-  Map worker hashes intermediate keys into R partitions, on local disk
-  Q: What's a good data structure for implementing this?
-  no Reduce calls until all Maps are finished
-  master tells Reducers to fetch intermediate data partitions from Map workers
-  Reduce workers write final output to GFS (one file per Reduce task)
+更多細節(論文圖片 1)
+  master: 指派 task 給 workers，紀錄中介資料的輸出位置
+  M 個 Map task, R 個 Reduce task
+  輸入資料存在 Google File System(GFS) 中，每個 Map 輸入資料有 3 複本
+  所有計算機跑 GFS 與 MR workers
+  tasks 數量遠大於 worker 數
+  master 指派一個 Map 給每個 worker
+    上個做完再指派新的
+  Map worker hash 中介資料的 keys 變成 R 份分割(partitions)，存在 worker 本地
+  Question: 有什麼好的資料結構來實做這個分割?
+  所有 Map 做完，才開始 Reduce
+  master 告訴 Reducer 去從 Map workers 取得中介資料
+  Reduce worker 將最後的輸出寫入 GFS(每個 Reduce task 產生一個檔案)
 
-How does detailed design reduce effect of slow network?
-  Map input is read from GFS replica on local disk, not over network.
-  Intermediate data goes over network just once.
-    Map worker writes to local disk, not GFS.
-  Intermediate data partitioned into files holding many keys.
-    Q: Why not stream the records to the reducer (via TCP) as they are being
-       produced by the mappers?
+細節設計如何避免網路的遲緩
+  從GFS 讀取 Map 的輸入後，複製一份到 worker 本地，不再經由網路傳輸
+  中介資料只移動一次(Maper -> Reducer)
+    Map worker 寫到本地，而非 GFS    
+  中介資料分割程多個很多 keys 的檔案
+    Question: 為何 mapper 產生資料後，不直接串流傳送資料到 reducer (透過 tcp)
 
-How do they get good load balance?
-  Critical to scaling -- bad for N-1 servers to wait for 1 to finish.
-  But some tasks likely take longer than others.
-  [diagram: packing variable-length tasks into workers]
-  Solution: many more tasks than workers.
-    Master hands out new tasks to workers who finish previous tasks.
-    So no task is so big it dominates completion time (hopefully).
-    So faster servers do more work than slower ones, finish abt the same time.
+如何實現負載均衡(load balance)?
+  負載均衡對擴展十分重要 -- 不好的負載均衡會讓 N-1 台伺服器等 1 台完成
+  但有些 task 就是會花比較多時間
+  [流程圖: 打包不同長度的 task 給 worker]
+  解決方案: task 數量要比 worker 多
+    Master 把新 task 指派給先做完的 worker
+    所以不會有太大的 task 影響整個完成時間(hopefully)
+    快的伺服器會多做 task，慢的做少一點，使得完成時間差不多
 
-What about fault tolerance?
-  I.e. what if a server crashes during a MR job?
-  Hiding failures is a huge part of ease of programming!
-  Q: Why not re-start the whole job from the beginning?
-  MR re-runs just the failed Map()s and Reduce()s.
-    MR requires them to be pure functions:
-      they don't keep state across calls,
-      they don't read or write files other than expected MR inputs/outputs,
-      there's no hidden communication among tasks.
-    So re-execution yields the same output.
-  The requirement for pure functions is a major limitation of
-    MR compared to other parallel programming schemes.
-    But it's critical to MR's simplicity.
+容錯:
+  I.e. 如果 MR job 中伺服器壞了
+  對應用端隱藏錯誤，大幅降低編程的困難
+  Question: 何不直接從頭重啟整個 job
+  MR 只從做失敗的 Map()s 與 Reduce()s
+    所以 MR 需要 Map 與 Reduce 是乾淨函式(pure function)
+      function 不保留變數到下個 call
+      function 不產生 MR input/outputs 以外的讀寫(r/w)
+      function 的 tasks 間，彼此沒有其他需要的溝通
+    所以重新執行 function 會產生一樣的結果
+  要求乾淨函式對於使用 MR 的人而言是一大限制
+    對比其他平行化編程的架構
+    但有乾淨函式，才有 MR 的簡單易懂
 
-Details of worker crash recovery:
-  * Map worker crashes:
-    master sees worker no longer responds to pings
-    crashed worker's intermediate Map output is lost
-      but is likely needed by every Reduce task!
-    master re-runs, spreads tasks over other GFS replicas of input.
-    some Reduce workers may already have read failed worker's intermediate data.
-      here we depend on functional and deterministic Map()!
-    master need not re-run Map if Reduces have fetched all intermediate data
-      though then a Reduce crash would then force re-execution of failed Map
-  * Reduce worker crashes.
-    finshed tasks are OK -- stored in GFS, with replicas.
-    master re-starts worker's unfinished tasks on other workers.
-  * Reduce worker crashes in the middle of writing its output.
-    GFS has atomic rename that prevents output from being visible until complete.
-    so it's safe for the master to re-run the Reduce tasks somewhere else.
+worker 壞掉復原的細節:
+  * Map worker 損壞:
+    master 發現 worker 不再回應 pings
+    損失壞掉 worker 上面的中介資料
+      但 Reduce task 會需要!
+    master 重新執行, 透過 GFS 分配輸入資料的複本
+    有些 reduce worker 可能已經讀取到錯誤資料(從壞掉 map worker 來)
+      這邊依賴 functional 與確定結果(deterministic) Map() 函式!
+    如果 reducer 都取得中介資料，master 就不用重啟 Map
+      然而如果又有 reducer 壞了，就可能被迫重新執行壞掉的 Map
+  * Reduce worker 損壞:
+    完成的 task 都沒事 -- 已經存在 GFS 裡，且有複本
+    master 重啟還沒完成的 task
+  * Reduce worker 在寫入輸出結果時損壞
+    GFS 會原子性(atomic)重新命名，避免輸出資料完成前被看到
+    所以 master 重啟 Reduce task 是安全的
 
-Other failures/problems:
-  * What if the master gives two workers the same Map() task?
-    perhaps the master incorrectly thinks one worker died.
-    it will tell Reduce workers about only one of them.
-  * What if the master gives two workers the same Reduce() task?
-    they will both try to write the same output file on GFS!
-    atomic GFS rename prevents mixing; one complete file will be visible.
-  * What if a single worker is very slow -- a "straggler"?
-    perhaps due to flakey hardware.
-    master starts a second copy of last few tasks.
-  * What if a worker computes incorrect output, due to broken h/w or s/w?
-    too bad! MR assumes "fail-stop" CPUs and software.
-  * What if the master crashes?
-    recover from check-point, or give up on job
+其他錯誤/問題:
+  * 如果 master 給了兩個 worker 一樣的 Map() task
+    也許是因為 master 誤以為原本的 worker 死了
+    沒關係，master 只會告訴 reducer，使用新的 worker 的 Map (master 認為活著的 worker)
+  * 如果 master 給了兩個 worker 一樣的 Reduce() task
+    兩個 reducer 都會寫入相同的 GFS file!
+    GFS 的原子性命名(atomic rename) 能避免寫入混入，只有一個完成的檔案最後可見
+  * 如果有一個 worker 特別慢 -- 落後者(straggler)
+    也許是因為硬體怪怪的
+    master 針對最後幾個 task，會啟動第二輪工作
+  * 如果 worker 因為 h/w 或 s/w 產生錯誤的輸出
+    太糟了! MR 推測 CPU 與應用應該要"錯誤立刻中止"(fail-stop)
+  * 如果 master 損壞
+    master 從上次的紀錄點(check-point) 回覆，或是放棄工作
 
-For what applications *doesn't* MapReduce work well?
-  Not everything fits the map/shuffle/reduce pattern.
-  Small data, since overheads are high. E.g. not web site back-end.
-  Small updates to big data, e.g. add a few documents to a big index
-  Unpredictable reads (neither Map nor Reduce can choose input)
-  Multiple shuffles, e.g. page-rank (can use multiple MR but not very efficient)
-  More flexible systems allow these, but more complex model.
+什麼樣的應用不適用 MapReduce
+  不是都符合 map/洗牌/reduce 模式
+  小資料，MapReduce 的基本消耗(overhead)高，E.g. 非網站的後端
+  對大筆資料的小更動，e.g. 添加一點文件到大的索引資料中
+  無法預期的讀取(Map 與 Reduce 都不能在流程中選擇輸入)
+  多次的洗牌，e.g. 網頁排名(page-rank)(可以用多個 MR 達成，但不是很有效率)
+  這些有其他更彈性的系統可以達成，但當然也會更複雜
 
-How might a real-world web company use MapReduce?
-  "CatBook", a new company running a social network for cats; needs to:
-  1) build a search index, so people can find other peoples' cats
-  2) analyze popularity of different cats, to decide advertising value
-  3) detect dogs and remove their profiles
-  Can use MapReduce for all these purposes!
-  - run large batch jobs over all profiles every night
-  1) build inverted index: map(profile text) -> (word, cat_id)
+真實世界中的網路公司如何使用 MapReduce
+  "CatBook", 一個貓的社交網路，需要:
+  1) 建造搜尋索引，人可以找到其他人的貓
+  2) 分析不同貓的人口，來決定廣告價值
+  3) 檢測並移除狗的資料
+  以上都可以用 MR 做
+  - 每天晚上都會批次大量執行
+  1) 建造反向索引(inverted index): 
+                           map(profile text) -> (word, cat_id)
                            reduce(word, list(cat_id) -> list(word, list(cat_id))
-  2) count profile visits: map(web logs) -> (cat_id, "1")
+  2) 計算 profile 瀏覽數量: 
+                           map(web logs) -> (cat_id, "1")
                            reduce(cat_id, list("1")) -> list(cat_id, count)
-  3) filter profiles: map(profile image) -> img analysis -> (cat_id, "dog!")
-                      reduce(cat_id, list("dog!")) -> list(cat_id)
+  3) 篩選 profile:  map(profile image) -> img analysis -> (cat_id, "dog!")
+                    reduce(cat_id, list("dog!")) -> list(cat_id)
 
-Conclusion
-  MapReduce single-handedly made big cluster computation popular.
-  - Not the most efficient or flexible.
-  + Scales well.
-  + Easy to program -- failures and data movement are hidden.
-  These were good trade-offs in practice.
-  We'll see some more advanced successors later in the course.
-  Have fun with the lab!
+結論
+  大型集群運算因為 MapReduce 而風行
+  - 不是最有效或是最彈性的
+  + 擴展良好
+  + 容易編程 -- 錯誤與資料搬移都在應用層隱藏
+  這些是實務上非常好的 trade-off
+  我們會討論更多先進的候繼算法
+  實做愉快!
