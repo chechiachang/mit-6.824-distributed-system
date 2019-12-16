@@ -51,7 +51,7 @@ http://pdos.csail.mit.edu/6.824
 閱讀:
   研究論文，包含過去經典，與一些新論文
   論文闡明關鍵的想法與重要的細節
-  取多課堂內容聚焦在論文
+  許多課堂內容聚焦在論文
   針對每份論文,課堂提供一些簡短問題讓學生回答
   學生需要再針對這份論文，提出你自己的問題
   （課前閱讀論文與閱讀材料）在每堂課前一晚，提交你手上的問題與答案
@@ -107,7 +107,7 @@ http://pdos.csail.mit.edu/6.824
     買更多機器就能處理更多負載(load)
   隨著 N 增加，擴展越來越困難
     負載不均衡(load im-balance), 落後的server (straggler)
-    無法平行化(Non-parallelizable)的原始碼，初始化(initialization)，互動(interaction)
+    無法平行化(Non-parallelizable)的原始碼: 初始化(initialization)，互動(interaction)
     共享資源(e.g. 網路)造成瓶頸(bottlenecks)
   注意有些效能問題，無法輕易用擴展處理
     e.g. 降低單一使用者的回應時間
