@@ -107,52 +107,52 @@
     sync.WaitGroup
     明確地等待所有子執行緒完成遞迴
 
-ConcurrentChannel crawler
-  a Go channel:
-    a channel is an object; there can be many of them
+併發 channel 爬蟲
+  Go channel:
+    channel 是一個物件; 可以有很多個
       ch := make(chan int)
-    a channel lets one thread send an object to another thread
+    channel 讓執行緒傳送物件到另一個執行緒
     ch <- x
-      the sender waits until some goroutine receives
+      server 等到 goroutine 收到東西
     y := <- ch
       for y := range ch
-      a receiver waits until some goroutine sends
-    so you can use a channel to both communicate and synchronize
-    several threads can send and receive on a channel
-    remember: sender blocks until the receiver receives!
-      may be dangerous to hold a lock while sending...
-  ConcurrentChannel master()
-    master() creates a worker goroutine to fetch each page
-    worker() sends URLs on a channel
-      multiple workers send on the single channel
-    master() reads URLs from the channel
-    [diagram: master, channel, workers]
-  No need to lock the fetched map, because it isn't shared!
-  Is there any shared data?
-    The channel
-    The slices and strings sent on the channel
-    The arguments master() passes to worker()
+      一個接收器，等其他 goroutine 送東西過來
+    可以使用 channel 來溝通與同步化
+    多個執行緒可以從單一 channel 傳送跟接收
+    記得: 接收方接收前，發送端會 block
+      傳送東西時，鎖住可能很危險...
+  併發 channel master()
+    master() 產生 worker goroutine 來處理每一頁
+    worker() 將 URLs 送進 channel
+      多個 worker 送進一個 channel
+    master() 從 channel 中將 URL 一個個讀出來
+    [流程圖: master, channel, workers]
+  不需要去鎖住 fechted map，這個 map 不再分享共用
+  有任何共享的資料嗎?
+    channel
+    送進 channel 的 slices 與 strings
+    master() 傳送給 worker() 的參數
 
-When to use sharing and locks, versus channels?
-  Most problems can be solved in either style
-  What makes the most sense depends on how the programmer thinks
-    state -- sharing and locks
-    communication -- channels
-    waiting for events -- channels
-  Use Go's race detector:
+何時使用共享資料與 lock，何時使用 channel
+  大部分問題，兩者都可解決
+  更重要的是程序員怎麼考慮
+    狀態 -- 共享與鎻
+    溝通 -- channels
+    等待事件(event) -- channels
+  使用 Go 的 race 探測工具:
     https://golang.org/doc/articles/race_detector.html
     go test -race 
 
-Remote Procedure Call (RPC)
-  a key piece of distributed system machinery; all the labs use RPC
-  goal: easy-to-program client/server communication
+遠端程序調用(Remote Procedure Call (RPC))
+  一個分散式系統的重要元件; 本課所有 lab 都使用 RPC
+  目標: 一個容易編寫的 client/server 溝通
 
-RPC message diagram:
+RPC 訊息流程圖:
   Client             Server
     request--->
        <---response
 
-RPC tries to mimic local fn call:
+RPC 試圖模擬本地 fn 調用:
   Client:
     z = fn(x, y)
   Server:
@@ -160,88 +160,87 @@ RPC tries to mimic local fn call:
       compute
       return z
     }
-  Rarely this simple in practice...
+  實務上不會這麼簡單...
 
-Software structure
+軟體架構
   client app         handlers
     stubs           dispatcher
    RPC lib           RPC lib
      net  ------------ net
 
-Go example: kv.go link on schedule page
-  A toy key/value storage server -- Put(key,value), Get(key)->value
-  Uses Go's RPC library
+Go 範例: kv.go 課程網頁上有連結
+  一個 key/value 儲存 server -- Put(key,value), Get(key)->value
+  使用 Go 的 RPC 程序庫
   Common:
-    You have to declare Args and Reply struct for each RPC type
+    需要宣告 Args 與 Reply 的 struct，每一個 RPC type 都需要宣告
   Client:
-    connect()'s Dial() creates a TCP connection to the server
-    Call() asks the RPC library to perform the call
-      you specify server function name, arguments, place to put reply
-      library marshalls args, sends request, waits, unmarshally reply
-      return value from Call() indicates whether it got a reply
-      usually you'll also have a reply.Err indicating service-level failure
+    connnect()'s Dial() 產生 TCP connection 到 server
+    Call() 詢問 RPC library 如何執行 call
+      指定 server function 名稱，參數，放置 reply 的地方
+      RPC library marshall 參數，發送 request，等待，unmarshally reply
+      透過 Call() 的回傳值，來判斷是否已經收到回覆
+      通常也會收到 reply.Err 顯示服務層的錯誤
   Server:
-    Go requires you to declare an object with methods as RPC handlers
-    You then register that object with the RPC library
-    You accept TCP connections, give them to RPC library
+    Go 需要你宣告 object 以及 methods 來作為 RPC handler
+    然後你透過 RPC library 註冊(register) 物件
+    你接受 TCP connection, 提供給 RPC library
     The RPC library
-      reads each request
-      creates a new goroutine for this request
-      unmarshalls request
-      calls the named method (dispatch)
-      marshalls reply
-      writes reply on TCP connection
-    The server's Get() and Put() handlers
-      Must lock, since RPC library creates per-request goroutines
-      read args; modify reply
- 
-A few details:
-  Binding: how does client know who to talk to?
-    For Go's RPC, server name/port is an argument to Dial
-    Big systems have some kind of name or configuration server
-  Marshalling: format data into packets
-    Go's RPC library can pass strings, arrays, objects, maps, &c
-    Go passes pointers by copying (server can't directly use client pointer)
-    Cannot pass channels or functions
+      讀取每個 request
+      每個 request 產生一個 goroutine
+      unmarshall request
+      調用指定名稱的方法(dispatch)
+      marshall reply
+      把reply寫入，透過 TCP connection
+    Server 的 Get() 與 Put() handlers
+      需要 lock; 因為 RPC library 每個 request 產生 goroutine
+      讀取 args; 更改 reply
 
-RPC problem: what to do about failures?
-  e.g. lost packet, broken network, slow server, crashed server
+一些細節:
+  Binding: client 如何知道要對誰溝通
+    對 Go's RPC, server 名稱與 port 為 Dial 的參數 
+    大型的系統 server 會有類似名稱的設定
+  Marshlling: 將資料格式化成封包(format data into packets)
+    Go's RPC library 可以傳送 strings, arrays, objects, maps, 等等
+    Go 傳送 pointer 時，是直接複製(server 不能讀取 client 的 pointer)
+    不能傳送 channel 或是 functions
 
-What does a failure look like to the client RPC library?
-  Client never sees a response from the server
-  Client does *not* know if the server saw the request!
-    Maybe server never saw the request
-    Maybe server executed, crashed just before sending reply
-    Maybe server executed, but network died just before delivering reply
-  [diagram of lost reply]
+RPC 問題: 如何處理錯誤?
+  e.g. 遺失封包, 網路錯誤，伺服器很慢，伺服器死了
 
-Simplest failure-handling scheme: "best effort"
-  Call() waits for response for a while
-  If none arrives, re-send the request
-  Do this a few times
-  Then give up and return an error
+Client RPC library 看到的錯誤是什麼樣子?
+  client 無法看到 server 的 respose
+  client *不*知道 server 是否已經看到 request 了
+    也許 server 從沒收到 request
+    也許 server 執行完，但是 reply 前死了
+    也許 server 執行完，但是 reply 前網路死了
+  [流程圖 lost reply]
 
-Q: is "best effort" easy for applications to cope with?
+最簡錯誤處理藍圖: "best effort" 最大努力
+  Call() 會等待 response 一段時間
+  如果沒收到，在重送一次 request
+  重試幾次
+  然後才放棄，回傳 error
 
-A particularly bad situation:
-  client executes
+問題: "best effort" 對應用來說好應付嗎?
+
+一個特別糟糕的情境:
+  client 執行
     Put("k", 10);
     Put("k", 20);
-  both succeed
-  what will Get("k") yield?
-  [diagram, timeout, re-send, original arrives late]
+  都成功
+  Get("k") 會拿到什麼?
+  [流程圖: timeout, re-send, 先出發的較晚抵達]
 
-Q: is best effort ever OK?
-   read-only operations
-   operations that do nothing if repeated
-     e.g. DB checks if record has already been inserted
+問題: best effort 真的適用嗎?
+  唯讀的操作
+  重複多次不影響的操作
+    e.g. DB 檢查一個紀錄是否已經 insert
 
-Better RPC behavior: "at most once"
-  idea: server RPC code detects duplicate requests
-    returns previous reply instead of re-running handler
-  Q: how to detect a duplicate request?
-  client includes unique ID (XID) with each request
-    uses same XID for re-send
+更好的 RPC 行為: "at most once" 至多一次
+  想法: server RPC 程式碼檢查重複的 request
+    回傳上次的 reply，而非重新執行 handler
+  問題: 如何檢查 request 是否重複?
+    使用相同的 XID 來重送
   server:
     if seen[xid]:
       r = old[xid]
@@ -250,40 +249,40 @@ Better RPC behavior: "at most once"
       old[xid] = r
       seen[xid] = true
 
-some at-most-once complexities
-  this will come up in lab 3
-  how to ensure XID is unique?
-    big random number?
-    combine unique client ID (ip address?) with sequence #?
-  server must eventually discard info about old RPCs
-    when is discard safe?
-    idea:
-      each client has a unique ID (perhaps a big random number)
-      per-client RPC sequence numbers
+有些 at-most-once 的複雜性
+  會出現在 lab 3
+  如何確保 XID 是 unique
+    大的亂數數值?
+    加上獨特 client ID(ip address?) 與去序列號(sequence #)?
+  server 總會需要拋棄舊有 RPC 的紀錄
+    拋棄這些紀錄安全嗎?
+    想法:
+      每個 client 有 unique ID(也許是大亂數數值)
+      每個 client RPC 有序列號
       client includes "seen all replies <= X" with every RPC
-      much like TCP sequence #s and acks
+      更像是 TCP 序列號與 acks
     or only allow client one outstanding RPC at a time
-      arrival of seq+1 allows server to discard all <= seq
-  how to handle dup req while original is still executing?
-    server doesn't know reply yet
-    idea: "pending" flag per executing RPC; wait or ignore
+      抵達 seq+1 後，允許 server 拋棄所有 <= seq 資料
+    如何處理重複 request，當原始的 RPC 仍在執行中?
+      server 不知道是否已經 reply 了
+      idea: "pending" flag 來標示每個執行中的 RPC; 等待或忽略
 
-What if an at-most-once server crashes and re-starts?
-  if at-most-once duplicate info in memory, server will forget
-    and accept duplicate requests after re-start
-  maybe it should write the duplicate info to disk
-  maybe replica server should also replicate duplicate info
+如果 at-most-once server 壞了，然後重啟?
+  如果 at-most-once 寫入重複的資訊到記憶體中，server 會忘記有這件事
+    然後重啟後，直接傳送重複的 request
+  也許應該把避免重複的訊息寫進硬碟
+  也許應該副本 server，來複製保留避免重複的訊息
 
-Go RPC is a simple form of "at-most-once"
-  open TCP connection
-  write request to TCP connection
-  Go RPC never re-sends a request
-    So server won't see duplicate requests
-  Go RPC code returns an error if it doesn't get a reply
-    perhaps after a timeout (from TCP)
-    perhaps server didn't see request
-    perhaps server processed request but server/net failed before reply came back
+Go RPC 是簡單形式的 at-most-once
+  開啟 TCP connection
+  寫 request 到 TCP connection 中
+  Go RPC server 重送 request
+    server 不會看到重複的 requests
+  Go RPC 程式碼回覆錯誤，如果沒有收到 reply
+    也許是 tcp timeout
+    也許 server 沒看到 request
+    也許 server 處理完 request，但 server/網路，在 reply 回來前壞了
 
-What about "exactly once"?
-  unbounded retries plus duplicate detection plus fault-tolerant service
+想想 "exactly once" 恰好一次
+  無限重試，加上重複檢測，加上容錯服務
   Lab 3
