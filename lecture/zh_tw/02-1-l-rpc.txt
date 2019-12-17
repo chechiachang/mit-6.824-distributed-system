@@ -1,0 +1,289 @@
+6.824 2018 Lecture 2: Infrastructure: RPC and threads
+
+常問問題: 為何使用 Go 語言
+  6.824 使用 C++ 很多年
+    C++ 效果不錯
+    但學生花很多時間追蹤 pointer 與記憶體分配/釋放的 bug
+    目前沒有滿意的 C++ RPC 程式庫
+  Go 比 C++ 好一些
+    良好的 concurrency 支持(goroutines, channels, 等等)
+    支持 RPC
+    自動 Garbage-Collected
+    型別安全
+    執行緒 + GC 很有吸引力!
+  我們喜歡寫 Go
+    相對簡單又傳統
+  介紹完後請去看看 https://golang.org/doc/effective_go.html
+  Russ Cox 在 3/8 會來客座教授一堂
+
+執行緒
+  執行緒是有用的結構工具
+  Go 稱為 goroutines，其他人都叫執行緒
+  執行緒可能會蠻棘手的
+
+為何使用執行緒
+  表現 concurrency，而這正是分散式系統的自然表現
+  I/O concurrency
+    等待 server 回應的同時，處理下個 request
+  多核心:
+    執行緒平行的跑在多個核心上
+
+執行緒 = "執行緒的執行"
+  執行緒讓一個程式可以(邏輯上地)同時執行很多事情
+  執行緒們分享記憶體
+  每個執行緒包含一些執行緒的各自狀態:
+    program counter, registers, stack
+
+一個程式中有多少執行緒?
+  有時受架構決定
+    e.g. 每個 client 一個執行緒, 每個背景工作一個執行緒
+  有時受多核平行處理的需求決定
+    每個核心一個執行緒
+    Go runtime 自動排程 goroutines 到有空的核心上
+  有時受 I/O 併發需求決定
+    數值受延遲與容量決定
+    持續增加，直到吞吐量停止成長
+  Go 執行緒相當便宜
+    100s or 1000s 都行，但也許不要百萬級
+    創造執行緒，比調用 method 貴
+
+多執行緒的挑戰:
+  資料分享
+    一個執行緒讀資料，同時另一個執行緒正在寫入
+    e.g. 兩個執行緒執行 count = count + 1
+    這是 "race" -- 往往是一個 bug
+    -> 使用 Mutexes (或其他同步化(synchronization))
+    -> 或是避免分享資料
+  協調兩個執行緒
+    (MapReduce 中)如何等所有 Map 執行緒結束
+    -> 使用 Go channels 或是 WaitGroup
+  併發的精細度(granularity of concurrency)
+    粗糙的併發 -> 簡單，但只能達到一點點併發與平行化
+    精細的併發 -> 更多的併發，也帶來更多的 races 與 deadlocks
+
+何為爬蟲(crawler)
+  目標是取得所有網頁資料，e.g. 輸入變成索引
+  網頁形成Graph
+  每頁還有多個連結
+  Graph 會形成迴圈
+
+爬蟲的挑戰:
+  為了 I/O 的併發
+    同時取得複數的 URLs
+    來增加每秒能處理的 URLs 數量
+    因為(在這情境中)網路的延遲的限制，遠大於網路容量的限制
+  每個 URL 只取得 *一次*
+    避免浪費網路帶寬
+    請善待遠端的伺服器們
+    => 需要記下造訪過的 URLs
+  知道是否完成
+
+爬蟲解決方案 [課程網頁上有crawler.go 連結]    
+
+序列化爬蟲(serial crawler):
+  下載過的圖(fetched map)避免重複，打斷 Graph 的迴圈
+  簡單的 map，使用 reference 呼叫多次遞迴
+  but: 同時只能處理一頁
+
+併發 Mutex 爬蟲:
+  每頁產生一個執行緒
+    很多併發下載，更高的下載速度
+  執行緒共用一份 fetched map
+  為何使用 Mutex (== 鎻)
+    不使用鎻:
+      兩個網頁如果有連結，連到同一個 URL
+      兩個執行緒同時處理這些網頁
+      T1 檢查 fetched[url] T2 檢查 fetched[url]
+      兩邊看到，都是還沒處理過
+      兩個就會都去處理，這是錯的
+    同時讀跟寫(或又讀又寫) 是一個 race
+      通常表示這邊有 bug
+      bug 可能只會在比較衰的執行緒中斷(thread interleavings)顯現
+    如果我把 Lock()/Unlock() 註解掉呢?
+      go run crwaler.go
+      go run -race crawler.go
+    lock 使得檢查與更新有原子性(atomic)
+  程式如何知道它做完了?
+    sync.WaitGroup
+    明確地等待所有子執行緒完成遞迴
+
+ConcurrentChannel crawler
+  a Go channel:
+    a channel is an object; there can be many of them
+      ch := make(chan int)
+    a channel lets one thread send an object to another thread
+    ch <- x
+      the sender waits until some goroutine receives
+    y := <- ch
+      for y := range ch
+      a receiver waits until some goroutine sends
+    so you can use a channel to both communicate and synchronize
+    several threads can send and receive on a channel
+    remember: sender blocks until the receiver receives!
+      may be dangerous to hold a lock while sending...
+  ConcurrentChannel master()
+    master() creates a worker goroutine to fetch each page
+    worker() sends URLs on a channel
+      multiple workers send on the single channel
+    master() reads URLs from the channel
+    [diagram: master, channel, workers]
+  No need to lock the fetched map, because it isn't shared!
+  Is there any shared data?
+    The channel
+    The slices and strings sent on the channel
+    The arguments master() passes to worker()
+
+When to use sharing and locks, versus channels?
+  Most problems can be solved in either style
+  What makes the most sense depends on how the programmer thinks
+    state -- sharing and locks
+    communication -- channels
+    waiting for events -- channels
+  Use Go's race detector:
+    https://golang.org/doc/articles/race_detector.html
+    go test -race 
+
+Remote Procedure Call (RPC)
+  a key piece of distributed system machinery; all the labs use RPC
+  goal: easy-to-program client/server communication
+
+RPC message diagram:
+  Client             Server
+    request--->
+       <---response
+
+RPC tries to mimic local fn call:
+  Client:
+    z = fn(x, y)
+  Server:
+    fn(x, y) {
+      compute
+      return z
+    }
+  Rarely this simple in practice...
+
+Software structure
+  client app         handlers
+    stubs           dispatcher
+   RPC lib           RPC lib
+     net  ------------ net
+
+Go example: kv.go link on schedule page
+  A toy key/value storage server -- Put(key,value), Get(key)->value
+  Uses Go's RPC library
+  Common:
+    You have to declare Args and Reply struct for each RPC type
+  Client:
+    connect()'s Dial() creates a TCP connection to the server
+    Call() asks the RPC library to perform the call
+      you specify server function name, arguments, place to put reply
+      library marshalls args, sends request, waits, unmarshally reply
+      return value from Call() indicates whether it got a reply
+      usually you'll also have a reply.Err indicating service-level failure
+  Server:
+    Go requires you to declare an object with methods as RPC handlers
+    You then register that object with the RPC library
+    You accept TCP connections, give them to RPC library
+    The RPC library
+      reads each request
+      creates a new goroutine for this request
+      unmarshalls request
+      calls the named method (dispatch)
+      marshalls reply
+      writes reply on TCP connection
+    The server's Get() and Put() handlers
+      Must lock, since RPC library creates per-request goroutines
+      read args; modify reply
+ 
+A few details:
+  Binding: how does client know who to talk to?
+    For Go's RPC, server name/port is an argument to Dial
+    Big systems have some kind of name or configuration server
+  Marshalling: format data into packets
+    Go's RPC library can pass strings, arrays, objects, maps, &c
+    Go passes pointers by copying (server can't directly use client pointer)
+    Cannot pass channels or functions
+
+RPC problem: what to do about failures?
+  e.g. lost packet, broken network, slow server, crashed server
+
+What does a failure look like to the client RPC library?
+  Client never sees a response from the server
+  Client does *not* know if the server saw the request!
+    Maybe server never saw the request
+    Maybe server executed, crashed just before sending reply
+    Maybe server executed, but network died just before delivering reply
+  [diagram of lost reply]
+
+Simplest failure-handling scheme: "best effort"
+  Call() waits for response for a while
+  If none arrives, re-send the request
+  Do this a few times
+  Then give up and return an error
+
+Q: is "best effort" easy for applications to cope with?
+
+A particularly bad situation:
+  client executes
+    Put("k", 10);
+    Put("k", 20);
+  both succeed
+  what will Get("k") yield?
+  [diagram, timeout, re-send, original arrives late]
+
+Q: is best effort ever OK?
+   read-only operations
+   operations that do nothing if repeated
+     e.g. DB checks if record has already been inserted
+
+Better RPC behavior: "at most once"
+  idea: server RPC code detects duplicate requests
+    returns previous reply instead of re-running handler
+  Q: how to detect a duplicate request?
+  client includes unique ID (XID) with each request
+    uses same XID for re-send
+  server:
+    if seen[xid]:
+      r = old[xid]
+    else
+      r = handler()
+      old[xid] = r
+      seen[xid] = true
+
+some at-most-once complexities
+  this will come up in lab 3
+  how to ensure XID is unique?
+    big random number?
+    combine unique client ID (ip address?) with sequence #?
+  server must eventually discard info about old RPCs
+    when is discard safe?
+    idea:
+      each client has a unique ID (perhaps a big random number)
+      per-client RPC sequence numbers
+      client includes "seen all replies <= X" with every RPC
+      much like TCP sequence #s and acks
+    or only allow client one outstanding RPC at a time
+      arrival of seq+1 allows server to discard all <= seq
+  how to handle dup req while original is still executing?
+    server doesn't know reply yet
+    idea: "pending" flag per executing RPC; wait or ignore
+
+What if an at-most-once server crashes and re-starts?
+  if at-most-once duplicate info in memory, server will forget
+    and accept duplicate requests after re-start
+  maybe it should write the duplicate info to disk
+  maybe replica server should also replicate duplicate info
+
+Go RPC is a simple form of "at-most-once"
+  open TCP connection
+  write request to TCP connection
+  Go RPC never re-sends a request
+    So server won't see duplicate requests
+  Go RPC code returns an error if it doesn't get a reply
+    perhaps after a timeout (from TCP)
+    perhaps server didn't see request
+    perhaps server processed request but server/net failed before reply came back
+
+What about "exactly once"?
+  unbounded retries plus duplicate detection plus fault-tolerant service
+  Lab 3
