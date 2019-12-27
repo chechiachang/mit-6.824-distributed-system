@@ -1,0 +1,222 @@
+6.824 2018 Lecture 3: GFS
+
+The Google File System
+Sanjay Ghemawat, Howard Gobioff, and Shun-Tak Leung
+SOSP 2003
+
+我們為何要讀這篇論文?
+  這是 map/reduce 使用的 file system
+  6.824 課程的主要議題都出現在論文中
+    犧牲一致性(consistency) 交換簡易性(simplicity) 與效能(performance)
+    啟發後續的(分散式)設計
+  非常好的系統論文(systems paper)，內容從應用層延續到網路
+    效能，容錯，一致性
+  這篇論文很有影響性
+    許多系統都使用 GFS(e.g. bigtable, Spanner @ Google)
+    HDFS(Hadoop Distributed File System) 也是基於 GFS
+
+何為一致性(consistency)?
+  描述一個正確性的狀態 
+  重要但很難達成，由於資料有許多複本
+    當應用層是併發(concurrently) 存取資料，更顯困難
+    [流程圖: 簡單的例子，一台機器]
+    如果一個應用寫入，稍後的讀取會觀察到什麼？
+      如果是另外一個不同應用來讀取呢？
+    然而當有複本時，每個寫入，都需要發生在所有其他機器上
+    [流程圖: 增加兩台機器，多次讀取跟寫入到三台機器]
+    明顯地這裡會有問題
+  弱一致性(Weak consistency)
+    read() 可能會回傳舊的資料 -- 不是最近一次 write() 的結果
+  強一致性(Strong consistency)
+    read() 總是回傳最近一次 write() 的結果
+  這兩者常會出現取捨:
+    應用的寫入方(writer)容易達成強一致性
+    但強一致性會嚴重影響效能
+    弱一致性有很好的效能，也很容易擴展
+    弱一致性討論起來比較複雜
+  基於不同的正確性(correctness)條件，有很多取捨(trade-offs)
+    這些取捨稱為『一致性模型』(consistency models)
+    幾乎每篇我們閱讀的論文，都會出現
+
+"理想" 的一致性模型
+  先回到單一機器
+  好想有一個複本式的FS(replicated file system) 但行為像非複本式的 FS
+    [流程圖: 同一台機器上，多個客戶端透過單一硬碟存取檔案]
+  一個應用寫入，隨後讀取，會讀到寫入的結果
+  如果兩個應用併發寫入相同檔案呢?
+    Q: 在同一台機器上，會發生什麼?
+    多數的 FS 沒有定義(undefined) -- 檔案可能會出現混雜的內容
+  如果兩個應用併發寫入相同資料夾呢?
+    Q: 在同一台機器上，會發生什麼?
+    一個先寫入，另一個稍後執行(使用鎻(locking))
+
+達成理想帶來的挑戰
+  併發(concurrency) -- 如同我們上面看到的，現實中會有很多硬碟
+  機器故障 -- 任何步驟都有可能在完成前故障
+  網路分割(network partitions) -- 不一定聯繫的上所有的機器/硬碟
+  這些挑戰為何很難克服?
+    客戶端與伺服器端需要溝通
+      這會消耗效能
+    協定(protocol) 可能會很複雜 -- 詳見下週
+      複雜的系統很難正確實做出來
+    大部分 6.824 討論的系統都不"理想"
+      例如 GFS
+
+GFS 的目標:
+  手上有很多機器，錯誤難免
+    需要容錯
+    假設一台機器一年只壞一次
+    手上有 1000 台，平均每天壞三台
+  高效能: 希望有很多併發的讀取與寫入
+    MR 的任務在 GFS 上讀取，並寫入最終結果
+    Note: 中介資料不會寫到 GFS
+  有效率的使用網路: 節省帶寬
+  這些挑戰，加上"理想"的一致性，更顯困難
+
+上層的設計: 讀取
+  [圖片 1 流程圖, master + chunk servers]
+  master 儲存資料夾，檔案，名稱，開啟/讀取/寫入
+    不是 POSIX
+  100s 台 Linux chunk servers 有硬碟
+    儲存 64MB 為單位的 chunk(每個 chunk 是一個普通的 Linux file)
+    每個 chunk 都會複製共三份複本，到不同機器上
+
+    Q: 除了增加可用性外，三個 replication 還有什麼好處?
+      熱門檔案讀取的負載均衡
+      親和度(affinity) 本地/就近讀取
+    Q: 為何不用 RAID'd 硬碟複製每一份檔案?
+      RAID 不是商用商品
+      需要整台機器都能容錯(允許整台機器壞掉)，而不是只有硬碟容錯
+    Q: 為何 chunk 要這麼大?
+      平攤基礎開銷(overhead)，減少 master 需要儲存的狀態資料
+  GFS master 知道資料夾的樹狀結構
+    資料夾，知道裡面的檔案
+    檔案，知道每個 64MB 檔案放在那寫 chunk server 上
+    master 把上述狀態存放在記憶體中
+      每個 chunk 有存放 64 bytes 的 metadata
+    master 有私有的 metadata 資料庫(可復原的)
+      各項操作的 log flush 到硬碟中
+      偶爾會非同步(asynchronous)壓縮資料到儲存點(checkpoint)
+      N.B: 不等於2.7.2 提到的應用層 checkpoint
+      master 可以從電源失效中快速復原
+    shadow master 稍微落後 master 一點
+      可以提昇作為 master
+  客戶端讀取:
+    傳送檔案名稱與 chunk 索引給 master
+    master 回傳存放 chunk 的 servers set
+      回傳 chunk 的版本號(version #)
+      客戶端會快取這些資訊
+    客戶端詢問最近的 chunk server
+      檢查 version # (master 與 chunk server 上的)
+      如果 version # 不同，重新問 master
+
+寫入:
+  [Figure 2-檔案 offset sequence的流程圖]
+  隨機的客戶端寫入既有檔案
+    客戶端問 master chunk 位置 + 誰是主要(primary) chunk
+    master 回應 chunk server, version #, 以及那個 chunk server 是 primary
+      primary 會取得 60 秒的有效期限
+    客戶端透過網路拓樸(network topology) 計算複本鍊(chain of replicas)
+      pipelines network use, distributes load
+    各個複本s都確認(ack) 收到即將寫入的資料
+    客戶端請求 primary 寫入
+      primary 指派序列號，並執行寫入
+      命令其他複本也執行寫入
+      所有動作完成後，primary 回覆確認給客戶端
+    萬一有另一個併發的客戶端寫入相同的地方呢?
+      C2 取得的序列號會排在 C1 之後，覆寫(overwrite)資料
+      C2 又再次寫入，這次取得較優先的序列號(優於 C1，可能因為 C1 比較慢)
+      C2 寫入完成，輪到 C1，一樣複寫剛才的資料
+      => 所有複本都有想同資料(= 一致性)，但同時混和了 C1/C2 的資料
+        (= 未定義)
+  客戶端的附加(append)，(不是資料的 append)
+    同樣的問題，但可以不管 C1, C2 的順序，都可以工作
+    一致性，但仍然未定義
+    如果只有一個客戶寫入 -- 同時滿足一致性與已定義(defined)
+
+Record append
+  Client record append
+    client asks master for chunk locations
+    client pushes data to replicas, but specifies no offset
+    client contacts primary when data is on all chunk servers
+      primary assigns sequence number
+      primary checks if append fits into chunk
+        if not, pad until chunk boundary
+      primary picks offset for append
+      primary applies change locally
+      primary forwards request to replicas
+      let's saw R3 fails mid-way through applying the write
+      primary detects error, tells client to try again
+    client retries after contacting master
+      master has perhaps brought up R4 in the meantime (or R3 came back)
+      one replica now has a gap in the byte sequence, so can't just append
+      pad to next available offset across all replicas
+      primary and secondaries apply writes
+      primary responds to client after receiving acks from all replicas
+
+Housekeeping
+  Master can appoint new primary if master doesn't refresh lease
+  Master replicates chunks if number replicas drop below some number
+  Master rebalances replicas
+
+Failures
+  Chunk servers are easy to replace
+    failure may cause some clients to retry (& duplicate records)
+  Master: down -> GFS is unavailable
+    shadow master can serve read-only operations, which may return stale data
+    Q: Why not write operations?
+	  split-brain syndrome (see next lecture)
+
+Does GFS achieve "ideal" consistency?
+  Two cases: directories and files
+  Directories: yes, but...
+    Yes: strong consistency (only one copy)
+    But: master not always available & scalability limit
+  Files: not always
+    Mutations with atomic appends
+	  record can be duplicated at two offsets
+    while other replicas may have a hole at one offset
+    Mutations without atomic append
+      data of several clients maybe intermingled
+      if you care, use atomic append or a temporary file and atomically rename
+  An "unlucky" client can read stale data for short period of time
+    A failed mutation leaves chunks inconsistent
+      The primary chunk server updated chunk
+      But then failed and the replicas are out of date
+    A client may read an not-up-to-date chunk
+    When client refreshes lease it will learn about new version #
+
+Authors claims weak consistency is not a big problems for apps
+  Most file updates are append-only updates
+    Application can use UID in append records to detect duplicates
+    Application may just read less data (but not stale data)
+  Application can use temporary files and atomic rename
+
+Performance (Figure 3)
+  huge aggregate throughput for read (3 copies, striping)
+    125 MB/sec in aggregate
+    Close to saturating network
+  writes to different files lower than possible maximum
+    authors blame their network stack
+    it causes delays in propagating chunks from one replica to next
+  concurrent appends to single file
+    limited by the server that stores last chunk
+  numbers and specifics have changed a lot in 15 years!
+
+Summary
+  case study of performance, fault-tolerance, consistency
+    specialized for MapReduce applications
+  what works well in GFS?
+    huge sequential reads and writes
+    appends
+    huge throughput (3 copies, striping)
+    fault tolerance of data (3 copies)
+  what less well in GFS?
+    fault-tolerance of master
+    small files (master a bottleneck)
+    clients may see stale data
+    appends maybe duplicated
+
+References
+  http://queue.acm.org/detail.cfm?id=1594206  (discussion of gfs evolution)
+  http://highscalability.com/blog/2010/9/11/googles-colossus-makes-search-real-time-by-dumping-mapreduce.html
