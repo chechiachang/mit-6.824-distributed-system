@@ -120,7 +120,7 @@ GFS 的目標:
       pipelines network use, distributes load
     各個複本s都確認(ack) 收到即將寫入的資料
     客戶端請求 primary 寫入
-      primary 指派序列號，並執行寫入
+      primary 指派序列號(sequence number)，並執行寫入
       命令其他複本也執行寫入
       所有動作完成後，primary 回覆確認給客戶端
     萬一有另一個併發的客戶端寫入相同的地方呢?
@@ -134,88 +134,88 @@ GFS 的目標:
     一致性，但仍然未定義
     如果只有一個客戶寫入 -- 同時滿足一致性與已定義(defined)
 
-Record append
-  Client record append
-    client asks master for chunk locations
-    client pushes data to replicas, but specifies no offset
-    client contacts primary when data is on all chunk servers
-      primary assigns sequence number
-      primary checks if append fits into chunk
-        if not, pad until chunk boundary
-      primary picks offset for append
-      primary applies change locally
-      primary forwards request to replicas
-      let's saw R3 fails mid-way through applying the write
-      primary detects error, tells client to try again
-    client retries after contacting master
-      master has perhaps brought up R4 in the meantime (or R3 came back)
-      one replica now has a gap in the byte sequence, so can't just append
-      pad to next available offset across all replicas
-      primary and secondaries apply writes
-      primary responds to client after receiving acks from all replicas
+資料附加(append)
+  客戶端附加資料
+    客戶端詢問 master chunk 的位置
+    客戶端把資料推送到所有複本上，指定 no offset
+    資料到所有 chunk server 上之後，客戶端通知 primary
+      primary 指定序列號
+      primary 檢查附加的資料能否放進 chunk
+        如果size 不合，pad 到填滿 chunk
+      primary 選擇附加的 offset
+      primary 在本地套用(apply)這些變更
+      primary 轉發要求(request)到其他複本上
+      假設 R3 (複本3) 在 primary 套用的途中壞了
+      primary 檢測到錯誤，告訴客戶端再試一次
+    客戶端先聯絡 master，然後重試
+      master 可能已經添加一個 R4 到線上了(或是 R3 復原了)
+      其中一個複本現在有一段落後的 byte sequence，所以沒辦法直接附加新的資料
+      pad 下個 offset 到所有的複本
+      primary 與 secondaries 都套用資料的變更
+      primary 收到所有複本的 ack 後，回覆客戶端
 
 Housekeeping
-  Master can appoint new primary if master doesn't refresh lease
-  Master replicates chunks if number replicas drop below some number
-  Master rebalances replicas
+  master 如果沒有更新 primary 的有效期限，可以指派新的 primary
+  如果有效複本的數量低於需求數量，master 會複製 chunk
+  master 會調整複本的負載(rebalance) -- 分散 primary 在大部分的機器
 
-Failures
-  Chunk servers are easy to replace
-    failure may cause some clients to retry (& duplicate records)
-  Master: down -> GFS is unavailable
-    shadow master can serve read-only operations, which may return stale data
-    Q: Why not write operations?
-	  split-brain syndrome (see next lecture)
+錯誤
+  chuck server 很容易就可以取代
+    錯誤可能讓客戶端重試(或是一些多餘的資料)
+  master 下線的話，整個 GFS 不可用
+    shadow master 可以負擔 read-only 行為，但這樣可能會使用到陳舊的資料
+    Q: 為何不也執行寫入工作?
+    會產生多頭馬車症候群(split-brain syndrome) 詳見下堂課
 
-Does GFS achieve "ideal" consistency?
-  Two cases: directories and files
-  Directories: yes, but...
-    Yes: strong consistency (only one copy)
-    But: master not always available & scalability limit
-  Files: not always
-    Mutations with atomic appends
-	  record can be duplicated at two offsets
-    while other replicas may have a hole at one offset
-    Mutations without atomic append
-      data of several clients maybe intermingled
-      if you care, use atomic append or a temporary file and atomically rename
-  An "unlucky" client can read stale data for short period of time
-    A failed mutation leaves chunks inconsistent
-      The primary chunk server updated chunk
-      But then failed and the replicas are out of date
-    A client may read an not-up-to-date chunk
-    When client refreshes lease it will learn about new version #
+所以 GFS 達到 "理想" 的一致性了嗎?
+  兩個案例: 資料夾，檔案
+  資料夾: 基本上達到，但是...
+    Yes: 強一致性(樹狀結構只有一份紀錄在 master)
+    但: master 不一定總是可用，而且擴展十分侷限
+  檔案: 沒有總是達到一致性
+    mutation 使用原子性附加(atomic append)
+      資料可能使用兩個不同的 offset 複製
+      其他複本可能在一個 offset 上出現空洞
+    mutation 不使用原子性附加
+      不同客戶端的資料可能混在一起
+      如果在意資料混雜的問題，可以使用原子性附加，或是寫入暫存檔案，寫入完成再原子性重新命名
+  不幸的客戶端可能會短時間內讀到陳舊的資料
+    如果 mutation 失敗，可能會讓 chunk 資料不一致
+      primary chunk server 更新 chunk
+      但是出現錯誤，導致複本都沒有更新到最新資料
+    客戶端可能會讀取不是最新狀態的 chunk
+    直到客戶端刷新有效期限，客戶端才會知道最新的版本號(version #)
 
-Authors claims weak consistency is not a big problems for apps
-  Most file updates are append-only updates
-    Application can use UID in append records to detect duplicates
-    Application may just read less data (but not stale data)
-  Application can use temporary files and atomic rename
+論文作者表示弱一致性不會給應用端產生太多問題
+  大部分的檔案更新都是附加類型
+    應用可以在附加資料中使用 UUID，來辨識重複的資料
+    應用可以降低讀取的資料量(避免陳舊的資料)
+  應用可以使用暫存檔案與原子性重新命名
 
-Performance (Figure 3)
-  huge aggregate throughput for read (3 copies, striping)
-    125 MB/sec in aggregate
-    Close to saturating network
-  writes to different files lower than possible maximum
-    authors blame their network stack
-    it causes delays in propagating chunks from one replica to next
-  concurrent appends to single file
-    limited by the server that stores last chunk
-  numbers and specifics have changed a lot in 15 years!
+效能(Figure 3)
+  讀取有強大的輸出(資料3 個複本，且分割到不同機器上(striping))
+    骨幹有 125MB/s
+    網路流量幾乎飽和
+  寫入到不同檔案的表現，低於最大可能性
+    作者覺得是網路棧的問題
+    讓複本傳播到 chunk 到其他複本時出現延遲
+  併發附加到單一檔案
+    則會受限儲存最後一個 chunk 的機器
+  上述數據都是 15 年前的數據了!
 
-Summary
-  case study of performance, fault-tolerance, consistency
-    specialized for MapReduce applications
-  what works well in GFS?
-    huge sequential reads and writes
-    appends
-    huge throughput (3 copies, striping)
-    fault tolerance of data (3 copies)
-  what less well in GFS?
-    fault-tolerance of master
-    small files (master a bottleneck)
-    clients may see stale data
-    appends maybe duplicated
+結論
+  案例討論效能，容錯，一致性
+    GFS 特化給 MapReduce 應用
+  哪些案例適合 GFS?
+    大量的讀取跟寫入
+    附加資料
+    需要大量的吞吐量(3 個複本, striping)
+    資料上的容錯(3 複本)
+  哪些不太適合 GFS?
+    需要 master 的容錯
+    多而小的檔案(master 整理檔案路徑會有瓶頸)
+    不允許客戶端看到陳舊資料
+    不允許附加的資料可能會多餘複製
 
 References
   http://queue.acm.org/detail.cfm?id=1594206  (discussion of gfs evolution)
