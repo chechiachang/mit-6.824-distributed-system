@@ -6,7 +6,7 @@ This repository contains lecture content and learning notes about [MIT 6.824 Dis
 - Translate lecture content into traditional Chinese
   - as my personal learning process
   - also try to help 
-- Follow [schecule of 2018](http://nil.csail.mit.edu/5.824/2018/schedule.html)
+- Follow [schecule of 2018](http://nil.csail.mit.edu/6.824/2018/schedule.html)
 
 For more information about this lesson, check [course website](http://nil.csail.mit.edu/6.824/2018/general.html)
 
