@@ -1,0 +1,293 @@
+6.824 2018 Lecture 4: 主節點/備用複本(Primary/Backup Replication)
+
+今天內容
+  為了容錯而使用主節點/備用複本
+  VMware FT 是者個想法的極端版本，對此案例分析
+
+容錯
+  希望錯誤發生時，服務仍能繼續
+  理想中的性質:
+    可用: 發生 [某些類別的] 錯誤，仍然可用
+    強一致性: 使用上接近單一節點
+    對客戶端透明可見(transparent)
+    對伺服器端透明可見
+    有效率
+
+我們試圖面對的錯誤:
+  Fail-stop 錯誤
+  獨立的錯誤
+  網路遺失封包
+  網路分割(network partition)
+
+而非:
+  不正確的執行
+  戶相關連的錯誤
+  設定錯誤
+  Malice
+
+行為
+  可用 (e.g. 當一台伺服器中斷時)
+  等待 (e.g. 如果網路全壞了)
+  永久停機 (e.g. 如果許多伺服器壞了)
+  不正常工作 (e.g. 如果 h/w 運算不正確，或是軟體有 bug)
+
+核心想法: 複本
+  *2* 或更多伺服器
+  每個複本都紀錄狀態，提供給服務
+  如果一個複本失效，其他可繼續工作
+
+範例: MapReduce master 的容錯
+  lab 1 workers 已經可容錯，但 master 無法容錯
+    master 成為"單點錯誤"(single point of failure)
+  我們是否可以有多個 master 以防其中一個故障?
+  [流程圖: M1, M2, workers]
+  (需要紀錄的)狀態:
+    worker list
+    已完成的 job
+    哪些 worker 待機中(idle)
+    TCP 連線的狀態
+    程式的記憶體與 stack
+    CPU registers
+
+巨觀問題:
+  哪些狀態需要複製複本?
+  主節點需要等待複本嗎?
+  何時需要裁撤複本?
+  裁撤複本時，不正常的行為會被看到嗎?
+  如何快速的執行(master 的) 取代?
+
+兩個嘗試:
+  狀態傳送
+    Primary 複製服務的執行動作(operation)
+    Primary 傳送 [新的] 狀態給複本
+  replicated state machine 備份狀態機器
+    所有複本都執行全部的執行動作
+      如果初始狀態一樣
+        相同的執行動作
+        相同的順序
+        結果決定性(deterministic)
+        則最終狀態一樣
+
+狀態傳送比較簡單
+  但狀態資料可能很大，傳送緩慢
+  VM-FT 使用 replicated state machine
+
+Replicated state machine 做起來更有效率
+  當執行動作相對比資料量小
+  然而想做的正確，會有點複雜
+  Lab 2/3/4 使用 replicated state machine
+
+在哪個層級(level) 定義一台 replicated state machine?
+  K/B put & get?
+    應用層(application-level) RSM
+    往往需要更改伺服器端與客戶端
+    效率高; primary 只要傳送高階(high-level)的執行動作給複本
+  x86 指令?
+    可以讓我們複製所有伺服器的 w/o 更改
+    但 primary/複本 會需要更精細的同步
+    還會需要處理中斷(interrupts)，DMA，奇怪的 x86 指令
+
+"可容錯的VMs實務系統"
+
+The design of a Practical System for Fault-Tolerant Virtual Machines
+Scales, Nelson, and Venkitachalam, SIGOPS OSR Vol 44, No 4, Dec 2010
+
+很有也新的系統:
+  目標: 提供伺服器上的服務容錯
+  目標: 客戶端不會發現任何錯誤
+  目標: 客戶端或伺服器服務不用任何更動(為了容錯)
+  非常遠大!
+
+概觀
+  [流程圖: app, O/S, 下面是 VM-FT, 共享硬碟, 網路, 客戶端]
+  名詞解釋:
+    hypervisor == monitor == VMM(virtual machine monitor)
+    app 與 O/S 都是執行在 VM 中的"客戶"
+  兩台機器, primary 與備用
+  共享硬碟作為持久儲存
+    使用共享以加速切換備份的時間
+  primary 使用 logging channel 把所有 input 送到備份
+
+這個想法可用?
+  是 replicated state machine
+  primary 與備份使用相同初始狀態啟動(記憶體, 硬碟檔案)
+  相同的指令, 相同的 input -> 相同的執行
+    所有東西都相同, primary 與備份會完全一致
+
+我們需要注意哪些可能造成偏差的原因?
+  需要確保指令一模一樣地執行在 primary 與備用上
+    只要記憶體與 register 都相同就可以, 這點我們先推論假設
+  什麼時候 primary 與備用的指令執行會不同?
+  外部世界(網路)來的 input
+  從儲存伺服器讀取的資料
+  中斷的時機
+  不是 pure function 的指令, 例如 cycle counter
+  Race
+
+一些偏差的例子
+  都像是"如果 primary 失效, 客戶從備用讀到的狀態不一樣"
+  Lock server 提供 lock 給客戶端 C1, 然後拒絕 C2 的請求
+    primary 與備用都要收到相同的 input 順序!
+    不然 primary 失效後, 備用會告訴客戶端 C2 取得 lock
+  Lock server 一分鐘後取消 lock
+    C1 原先取得 lock，持有 lock 一分鐘
+    C2 要求 lock
+    primary 看到 C2 的要求發生在計時器中斷之前，所以拒絕
+    備用看到 C2 的要求發生在計時器中斷之後，所以給出 lock
+  所以: 在指令串流中，備用一定要看到相同的事件, 依照相同的順序, 在相同的時間
+
+範例: 計時器中斷
+  目標: primary 與備用需要在相同時間看到中斷
+    i.e. 中斷前後的兩個指定都要一樣
+  Primary:
+    FT 產生計時器中斷
+    FT 讀取 CPU 的指令序(instruction number)
+    FT 傳送"計時器中斷發生在 instruction X" 到 logging channel
+    FT 傳送中斷到 primary, 然後回復計時器的運作
+    (仰賴 CPU 的特殊支援, 計算指令並在 X 後中斷)
+  備用:
+    忽略自身硬體計時器
+    FT 先看到 log entry，在備用執行到 instruction X 之前
+    FT 告訴 CPU 執行到 instruction X 後中斷
+    FT 模擬計時器中斷, 之後回復備用的運作
+
+範例: 硬碟/網路 input
+  Primary 與備用一起要求 h/w 讀取
+    FT 攔截要求, 忽略備用的請求, 提供 primary 真實的 r/w
+  Primary:
+    FT 告訴 h/w 使用 DMA 到 FT 私有的 "bounce buffer"
+    執行 DMA，然後中斷
+    FT 收到中斷
+    FT 暫停 primary
+    FT 複製 bounce buffer 到 primary 的記憶體中
+    FT 在 primary 上模擬中斷，然後回復 primary 的運行
+    FT 把資料與 instruction # 送到備用
+  備用:
+    FT 從 log 中取得資料與 instruction #
+    FT 告訴 CPU instruction X 後中斷
+    FT 複製中斷發生時的資料
+
+為何使用 bounce buffer?
+  I.e. 為何複製資料前，要等待 primary 與備用暫停?
+  我們希望資料出現在記憶體的時間，primary 與備用都相同
+  不然會產生偏差
+
+注意備份必須落後一個事件(一個 log entry)
+  如果 primary 在 instruction X 後收到中斷或是 input
+  如果備份已經執行超過 X，備份就會無法正確處理 input
+  也就是說，收到第一個 log entry 前，FT 無法開始執行
+    然後 FT 執行 log entry 到 instruction #
+    然後等待下個 log entry，再重啟備份
+
+範例: non-functional instructions
+  就算 primary 與備份有相同的記憶體與 register，有些 instruction 執行也會產生不同結果
+  e.g. 讀取當前時間，讀取 cycle count，或是讀取處理器 serial #
+  Primary:
+    FT 設定 CPU，如果有上述 instruction，要中斷 CPU
+    FT 執行 instruction，並且紀錄結果
+    傳送結果與 instruction # 到備份
+  備份:
+    備份執行 instruction 時也要中斷
+    FT 提供 primary 執行的結果
+
+如果是 output 到硬碟/網路?
+  Primary 與備份同時執行 instructions
+  Primary 的 FT 確實輸出結果
+  備份的 FT 拋棄 output
+
+But: 論文中的 Output 規則(section 2.2) 表示 primary 產生 output 時必須告知備份，
+     並且延後 output，直到備份確認有收到 log entry
+
+為何需要這調輸出規則?
+  假設沒有輸出任何檔案
+  Primary 立刻釋出輸出
+  假設 Primary 收到 input I1 I2 I3 然後釋出輸出
+  備份從 log 收到 I1 I2
+  Primary 失效，而且 I3 分包遺失在網路中
+  備份開始運作，但沒有處理 I3
+    但一部分客戶端已經看到 primary 執行 I3 後送出的 output
+    所以客戶端重連後，可能會看到不正常的結果
+  所以在備份收到所有 input 之前， primary 不釋出輸出
+
+輸出規則很重要
+  各種 replication system 都有輸出規則
+  會導致嚴重的效能限制
+  這邊的優化取決特定應用
+    Eg. read-only 工作，也許不需要讓 primary 回覆前等待 
+  FT 沒有應用層的訊息，所以這邊要盡量保守
+
+Q: 如果 primary 收到複本 ACK 後失效，但還沒釋出輸出?
+   這個情形下，輸出還會送出嗎?
+
+A: 以下是 primary 失效到備用生效，中間發生的事情
+   備用收到 log entries
+   備用持續執行 log entry，但此時(由於primary 失效) 沒有 primary 來的輸出壓制
+   所以最後的 log entry 處理完，備用會釋出輸出
+   上個例子，最後的 log entry 是 I3
+   所以 I3 結束後，客戶端會收到輸出
+   備用產生輸出(原先應該由 primary 產生)
+
+Q: 如果 primary 在釋出輸出後失效呢?
+   備用可能會重複釋出第二次輸出
+
+A: 是的
+   這對 TCP 很 ok，接收方會忽略重複的 sequence number
+   對硬碟寫入也 ok， 因為備用有會寫入相同的資料，到相同的 block # 上
+
+清除重複的輸出，在 replication system 中很常見
+  當然在某些情形下，客戶端會很難忽略重複資料
+  例如輸出是從 ATM 提款
+
+Q: FT 可以處理網律分個的問題嗎 -- 是否會有多頭馬車的情形?
+   E.g. 如果 primary 與備用都覺得對方失效了
+   會不會兩個(在分割的網路中)都生效
+
+A: 共享硬碟決定
+   共享硬碟支援原子性的寫入前測試(test-and-set)
+   只有一方可以取得 test-and-set 然後使用共享硬碟
+   如果兩方同時嘗試，只有一方可以使用，另一方會中斷
+
+共享硬碟會有單點失效問題
+  如果共享硬碟失效，整個服務都失效
+  也許應該考慮複本式儲存系統
+
+Q: 為何不支援多核心?
+
+效能(table 1)
+  FT/Non-FT: 印象深刻!
+    只慢一點點
+  Logging 帶寬
+    直接反應硬碟的讀取速度 + 網路輸入速率
+    my-sql 有 18 Mbit/s
+  這些數字在我看來有點慢
+    應用可以用 400 megabits/s 的速度讀取
+    論文作者的應用不是硬碟密集的(disk-intensive)
+
+什麼時候 FT 很吸引人?
+  重要但是密集度不高的服務，e.g. name server
+  軟體不會常常修改的服務
+
+那是否有給密集輸出服務的複本系統?
+  人們使用應用層的 replicated state machine 給 e.g. 資料庫
+    只在意 DB 是有狀態，而不是整個記憶體+硬碟
+    應用的事件是 DB 的命令(put/get)，而不是封包與中斷
+  結果: 較不精密的同步化(synchronization)，比較小的 overhead
+  GFS 使用應用層的複本，如 Lab 2 &c
+
+總結:
+  Primary與備份的複本系統
+    VM-FT: 乾淨的範例
+  如何處理分割，避免單點錯誤
+    下一堂課
+  如何增進效能?
+    使用應用層的 replicated state machines
+  
+----
+
+VMware KB (#1013428) 提到多核心支援，VM-FT 可能已經從 replicated state machine
+轉成 state transfer approach，但這點我們不太清楚.
+
+http://www.wooditwork.com/2014/08/26/whats-new-vsphere-6-0-fault-tolerance/
+http://www.tomsitpro.com/articles/vmware-vsphere-6-fault-tolerance-multi-cpu,1-2439.html
+
+https://labs.vmware.com/academic/publications/retrace 
