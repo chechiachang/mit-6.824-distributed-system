@@ -9,4 +9,5 @@
 |Week/Day|TuesDay|Thursday|
 |--------|-------|--------|
 |W 1|Feb 6. [Lec.1 課程簡介與導言](01-l01.txt)|feb 8. [Lec.2 RPC 與執行緒](02-1-l-rpc.txt)|
-|W 2|Feb 13. [Lec.3 GFS](03-l-gfs-short.txt)|feb 15. WIP [Lec.4 Primary-Backup Replication]()|
+|W 2|Feb 13. [Lec.3 GFS](03-l-gfs-short.txt)|feb 15. [Lec.4 Primary-Backup Replication](04-l-vm-ft.txt)|
+|W 3|Feb 20. President's Day |feb 22. [Lec.5 Fault Tolerant: Raft](05-l-raft.txt)|
