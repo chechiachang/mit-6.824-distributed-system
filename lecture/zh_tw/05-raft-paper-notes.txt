@@ -1,0 +1,101 @@
+In Search of an Understandable Consensus Algorithm (Extended Version)
+
+[Paper on mit.edu](http://nil.csail.mit.edu/6.824/2018/papers/raft-extended.pdf)
+
+Raft
+  是管理 replicated log 的共識算法(consensus algorithm)
+  等效於 Paxos，但架構更容易理解
+    Paxos 對學生或工程師來說都很棘手
+  是許多大型系統的基石
+
+Raft 特性
+  單一強領袖(Strong leader)
+    log 只從 leader 複製到其他 server
+  領袖選舉
+    heartbeat
+    其他一點小機制
+  成員變更
+    joint consensus: 兩個不同設定狀態的多數決會重疊
+    變更過程中，集群正常工作
+
+Replicated State Machine(RSM)
+  將機器的狀態完整複製到其他機器上
+  機器失效時，後繼者可以接手
+  典型的實做是 replicated log:
+    每個 server 存放一串依序的 command 到 log 中
+    把 log 複製到其他 server ，執行 command，所有機器的狀態相同
+    維持 replicated log 的一致性就是共識算法的用途
+
+實務上，共識算法有以下特性
+  安全，不能回傳錯誤
+    non-Byzantine condifions，包括網路延遲，分割，封包遺失，資料重複，資料順序改變
+  可用，容錯
+  一致性不依賴特定時機
+    錯誤的計時器可能最終影響可用性
+
+Raft 實做
+  選出一個 leader
+  leader 負責管理 replicated log
+    接受客戶端的 command
+    複製 log 到 followers
+    告訴 follower 何時可以安全的執行 command
+    leader 工作不需要徵詢其他節點
+    note: log 裝 command，只有安全(commited) 的 command 才會執行
+  leader 失效時，需要舉行選舉
+
+---
+
+1 leader 4 followers
+  majority = 3
+
+leader 
+  接收 client 的 command -> log
+  定期把 log 給 followers
+    AppendEntries RPC
+      leader's term，如果 leader 任期比較新，follower 把自己手上的任期改成 leader 的任期
+      log
+
+leader 終有死
+
+follower 太久沒收到 log 就會
+  自行宣佈參選 follower -> candidate
+
+candidate
+  自行舉辦選舉 currentTerm++
+  投給自己
+  設定選舉期限
+  送 RequestVote 向其他節點拉票
+    參選人手上的
+      目前參選的任期
+      lastLogIndex 最後一個 log 的位置，判斷候選人的長度
+      lastLogTerm 判斷候選人手上 log 是否跟上時事，是否跟上新任期
+
+選民收到 RequestVote，判斷要不要投給它
+  比較長的人有優勢(log)
+    候選人的 log >= 選民，才可能投候選人，反之不投
+  比較新的任期有優勢(term)
+    候選人的任期>=選民，才可能投候選人，反之不投
+
+誰勝選，最早蒐集到多數票(3票)的候選人自行宣佈當選
+  當選後直接上任 leader，開始傳送 log 給其他 follower
+  follower 如果也在辦選舉，收到 leader 的 AppendEntries 直接縮回去變回 follower
+
+總結
+  單一總統制，總統壓制底下派系想參選的意圖
+  太久沒看到總統，地下派系自行發起選舉，自行參選，並向其他人拉票
+
+  這不是台灣的選舉，這是 Raft 共識算法 XD
+  選舉完該來讀書瞜，現在 MIT 6.824 分散是系統持續推進到第三週
+  自幹 Raft 幹起來
+
+  救國唯有讀書
+
+Raft
+  single strong leader
+  leader 分配工作
+  leader 壓制其他 follower 想參選的意圖
+  太久沒看到 leader，follower 自行發起選舉，自行參選，並向其他人拉票
+  去中心化的選舉，每個人都自辦選舉
+  follower 收到拉票，比較自己的任期與 log ，判斷要不要投給拉票候選人
+  先爭取到多數人支持的候選人，自行宣佈當選，不會投給其他人，開始放送當選感言給其他人
+  其他人收到新 leader 的當選感言(?)，就會蒙受感召變回 follower
