@@ -1,0 +1,309 @@
+6.824 2017 Lecture 8: Zookeeper Case Study
+
+Reading: "ZooKeeper: wait-free coordination for internet-scale systems", Patrick
+Hunt, Mahadev Konar, Flavio P. Junqueira, Benjamin Reed.  Proceedings of the 2010
+USENIX Annual Technical Conference.
+
+為何需要讀這篇論文？
+  這是大量使用的 replicated state machine 服務
+    受 Chubby(Google's global lock service) 啟發
+    原本在 Yahoo!, 現在其他地方也有（Mesos, HBase, etc.)
+  開源
+    這是一個 Apache 專案(http://zookeeper.apache.org/)
+  案例研究如何搭建replicated service, 使用 Paxos/ZAB/Raft 程式庫
+    類似問題會出現在 Lab 3
+  有提供 API 給更廣泛的使用案例
+    需要能容錯的 master，應用不需要自幹功能
+    Zookeeper 十分泛用，應用可以直接使用 zookeeper
+  高效能
+    不像 Lab 3 的 replicated key/value 服務
+
+動機：在資料中心集群中，許多應用需要彼此協調
+  例如：GFS
+    master 針對每個 chunk 紀錄一個 chunk server 清單
+    master 決定哪個 chunk server 是 primary
+    etc.
+  其他例子：YMB, 爬蟲, 等等
+    YMB 需要 master 來 shard topics
+    爬蟲需要 master 來指揮頁面的抓取
+      （e.g. 有點像 MapReduce 的 master）
+  應用也需要發現彼此
+    MapReduce 需要知道 GFS master 的 IP:PORT
+    負載均衡器需要之後後面的 web server 位置
+  居中協調的服務常用在以上需求
+
+動機：效能 -- lab3
+  主要是 Raft
+  考慮一個 3-節點的 Raft
+  在回覆客戶端前，Raft 要做
+    leader 保存 log 紀錄
+    leader 平行送出訊息給 followers
+      每個 follower 保存 log 紀錄
+      每個 follower 回覆 leader
+  -> 2 次硬碟寫入，1 趟來回
+    如果是磁力硬碟： 2*10msec = 50 msg/秒
+    如果是固態硬碟：2*2msec＋1msec = 200 msg/秒
+  Zookeeper 效能可達 21,000 msg/秒
+    非同步 call
+    支援 pipelining
+
+取代方案：為每一個應用開發容錯 master 的功能
+  透過 DNS 發布元件的位置
+  OK, 如果 master 的程式不是太複雜
+  但，master 常常需要：
+    容錯
+      每個應用都導入 Raft?
+    高效能
+      每個應用都要考慮如何加速 "read" 操作
+  DNS 散步(propagation) 很慢
+    如果錯誤要切換（fail-over）會花很多時間
+  有些應用可以接受單點錯誤
+    E.g., GFS 與 MapReduce
+    需求更低
+
+Zookeeper: 一個泛用的協調服務
+  設計的挑戰：
+    如何設計 API？
+    如何讓 master 容錯？
+    如何達到高效能？
+  挑戰彼此牽動
+    高效能會影響 API 設計
+    e.g., 允許 pipelining 的非同步界面
+
+Zookeeper API 概觀
+  [流程圖: Zookeeper, 客戶端 session, ZAB 層]
+  replicated state machine
+    多台伺服器實做
+    指令依照全域順序（global order）執行
+      少數例外，如果一致性不重要的情形
+  複製的物件：znodes
+    znodes 的樹狀結構
+      命名依照路徑名稱（pathname）
+    znodes 內含應用的元資料（metadata）
+      設定資訊
+        參與應用的機器
+        哪個機器是 primary
+      時間搓記
+      版本號
+    znodes 類別：
+      一般（regular）
+      短暫（empheral）
+      依序（sequential）: 名稱 + 序列號（seq no）
+        如果 n 是新產生的 znode，p 是上層 znode，
+        則 n 的序列號不小於其他在 p 底下的依序 znodes
+
+  sessions
+    客戶端連入 zookeeper
+    session 讓客戶端可以錯誤切換（failover）到其他 zookeeper 服務
+      客戶知道上一個完成指令（zxid）的 term 與 index
+      每次請求都傳送
+        只有在服務端的進度跟上客戶端已見的進度，服務端才會執行指令
+    session 會逾時
+      客戶端持續更新 session
+        傳送心跳（heartbeat）到伺服器（像是租約）
+      Zookeeper 沒有收到客戶端訊息，會將客戶端視為失效（"dead"）
+      客戶端仍然可以工作（e.g. 網路分割）
+        但無法在 session 中實行 zookeeper 的指令行為
+    不同於 Raft + Lab3 KV store
+
+Znodes 的指令行為
+  create(path, data, flags)
+  delete(path, version)
+      if znode.version = version, then delete
+  exists(path, watch)
+  getData(path, watch)
+  setData(path, data, version)
+    if znode.version = version, then update
+  getChildren(path, watch)
+  sync()
+    上述指令都是非同步
+    每個指令都依照先進先出（FIFO）順序
+    sync 會等待所有前面的指令都傳遞（propagate）完成
+
+Check: can we just do this with lab 3's KV service?
+  flawed plan: GFS master on startup does Put("gfs-master", my-ip:port)
+    other applications + GFS nodes do Get("gfs-master")
+  problem: what if two master candidates' Put()s race?
+    later Put() wins
+    each presumed master needs to read the key to see if it actually is the master
+      when are we assured that no delayed Put() thrashes us?
+      every other client must have seen our Put() -- hard to guarantee
+  problem: when master fails, who decides to remove/update the KV store entry?
+    need some kind of timeout
+    so master must store tuple of (my-ip:port, timestamp)
+      and continuously Put() to refresh the timestamp
+      others poll the entry to see if the timestamp stops changing
+  lots of polling + unclear race behavior -- complex
+  ZooKeeper API has a better story: watches, sessions, atomic znode creation
+    + only one creation can succeed -- no Put() race
+    + sessions make timeouts easy -- no need to store and refresh explicit timestamps
+    + watches are lazy notifications -- avoids commiting lots of polling reads
+
+Ordering guarantees
+  all write operations are totally ordered
+    if a write is performed by ZooKeeper, later writes from other clients see it
+    e.g., two clients create a znode, ZooKeeper performs them in some total order
+  all operations are FIFO-ordered per client
+  implications:
+    a read observes the result of an earlier write from the same client
+    a read observes some prefix of the writes, perhaps not including most recent write
+      -> read can return stale data
+    if a read observes some prefix of writes, a later read observes that prefix too
+
+Example "ready" znode:
+  A failure happens
+  A primary sends a stream of writes into Zookeeper
+    W1...Wn C(ready)
+  The final write updates ready znode
+    -> all preceding writes are visible
+  The final write causes the watch to go off at backup
+    backup issues R(ready) R1...Rn
+    however, it will observe all writes because zookeeper will delay read until
+      node has seen all txn that watch observed
+  Lets say failure happens during R1 .. Rn, say after return Rj to client
+    primary deletes ready file -> watch goes off
+    watch alert is sent to client
+    client knows it must issue new R(ready) R1 ...Rn
+  Nice property: high performance
+    pipeline writes and reads
+    can read from *any* zookeeper node
+
+Example usage 1: slow lock
+  acquire lock:
+   retry:
+     r = create("app/lock", "", empheral)
+     if r:
+       return
+     else:
+       getData("app/lock", watch=True)
+
+    watch_event:
+       goto retry
+
+  release lock: (voluntarily or session timeout)
+    delete("app/lock")
+
+Example usage 2: "ticket" locks
+  acquire lock:
+     n = create("app/lock/request-", "", empheral|sequential)
+   retry:
+     requests = getChildren(l, false)
+     if n is lowest znode in requests:
+       return
+     p = "request-%d" % n - 1
+     if exists(p, watch = True)
+       goto retry
+
+    watch_event:
+       goto retry
+
+  Q: can watch_even fire before lock it is the client's turn
+  A: yes
+     lock/request-10 <- current lock holder
+     lock/request-11 <- next one
+     lock/request-12 <- my request
+
+     if client associated with request-11 dies before it gets the lock, the
+     watch even will fire but it isn't my turn yet.
+
+Using locks
+  Not straight forward: a failure may cause your lock to be revoked
+    client 1 acquires lock
+      starts doing its stuff
+      network partitions
+      zookeeper declares client 1 dead (but it isn't)
+    client 2 acquires lock, but client 1 still believes it has it
+      can be avoided by setting timeouts correctly
+      need to disconnect client 1 session before ephemeral nodes go away
+      requires session heartbeats to be replicated to majority
+        N.B.: paper doesn't discuss this
+  For some cases, locks are a performance optimization
+    for example, client 1 has a lock on crawling some urls
+    client will do it 2 now, but that is fine
+  For other cases, locks are a building block
+    for example, application uses it to build transaction
+    the transactions are all-or-nothing
+    we will see an example in the Frangipani paper
+
+Zookeeper simplifies building applications but is not an end-to-end solution
+  Plenty of hard problems left for application to deal with
+  Consider using Zookeeper in GFS
+    I.e., replace master with Zookeeper
+  Application/GFS still needs all the other parts of GFS
+    the primary/backup plan for chunks
+    version numbers on chunks
+    protocol for handling primary fail over
+    etc.
+  With Zookeeper, at least master is fault tolerant
+    And, won't run into split-brain problem
+    Even though it has replicated servers
+
+Implementation overview
+  Similar to lab 3 (see last lecture)
+  two layers:
+    ZooKeeper services  (K/V service)
+    ZAB layer (Raft layer)
+  Start() to insert ops in bottom layer
+  Some time later ops pop out of bottom layer on each replica
+    These ops are committed in the order they pop out
+    on apply channel in lab 3
+    the abdeliver() upcall in ZAB
+
+Challenge: Duplicates client requests
+  Scenario
+    Primary receives client request, fails
+    Client resends client request to new primary
+  Lab 3:
+    Table to detect duplicates
+    Limitation: one outstanding op per client
+    Problem problem: cannot pipeline client requests
+  Zookeeper:
+    Some ops are idempotent period
+    Some ops are easy to make idempotent
+      test-version-and-then-do-op
+      e.g., include timestamp and version in setDataTXN
+
+Challenge: Read operations
+  Many operations are read operations
+    they don't modify replicated state
+  Must they go through ZAB/Raft or not?
+  Can any replica execute the read op?
+  Performance is slow if read ops go through Raft
+
+Problem: read may return stale data if only master performs it
+  The primary may not know that it isn't the primary anymore
+    a network partition causes another node to become primary
+    that partition may have processed write operations
+  If the old primary serves read operations, it won't have seen those write ops
+   => read returns stale data
+
+Zookeeper solution: don't promise non-stale data (by default)
+  Reads are allowed to return stale data
+    Reads can be executed by any replica
+    Read throughput increases as number of servers increases
+    Read returns the last zxid it has seen
+     So that new primary can catch up to zxid before serving the read
+     Avoids reading from past
+  Only sync-read() guarantees data is not stale
+
+Sync optimization: avoid ZAB layer for sync-read
+  must ensure that read observes last committed txn
+  leader puts sync in queue between it and replica
+    if ops ahead of in the queue commit, then leader must be leader
+    otherwise, issue null transaction
+  in same spirit read optimization in Raft paper
+    see last par section 8 of raft paper
+
+Performance (see table 1)
+  Reads inexpensive
+    Q: Why more reads as servers increase?
+  Writes expensive
+    Q: Why slower with increasing number of servers?
+  Quick failure recovery (figure 8)
+    Decent throughout even while failures happen
+
+References:
+  ZAB: http://dl.acm.org/citation.cfm?id=2056409
+  https://zookeeper.apache.org/
+  https://cs.brown.edu/~mph/Herlihy91/p124-herlihy.pdf  (wait free, universal
+  objects, etc.)
