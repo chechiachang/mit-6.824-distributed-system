@@ -1,0 +1,110 @@
+Paxox 共識算法筆記
+===
+
+論文[Paxos Made Simple(Leslie Lamport 2001)](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
+
+Paxos
+
+目標：確保一串提議中，選出一個值
+      如果沒有提議，就沒有選出值
+      過程直到沒選出後，才會收到值
+
+proposal -> (processes) -> value
+
+Agents: 速度不同，可能會出錯，可能會重啟
+  需要有方法讓資訊度過 agent 錯誤與重啟
+
+Agent roles:
+  proposers
+  accepters
+  learners
+
+Message: 抵達需要時間不同，可能會重複，可能會遺失，但內容不會污染
+
+範例1: 單一 accepter
+  收到 proposer 的 proposal，選出第一個收到的 proposal
+  不好，單一 accepter 是單點錯誤
+  
+範例2: 多個 accepters
+  accepter 接受一個值
+  接受相同值的 accepter 取得多數決，作為最終選擇的值
+
+P1: acceptor 會接受第一個接收到的 proposal
+  問題：可能永遠無法取得多數
+    例如：2n+1 台機器，多數門檻為 n+1
+    結果其中一台機器失效，兩個 proposal 各佔一半的情形
+
+accepter 可以接受不只一個值
+  accepter 接受的每個值，加上序列號
+  例如：accepter a 的 #2 接受值是 2，#3 接受值是 3
+多數 accepter 都接受同一個值，我們稱這個值被選上（chosen）
+
+P2: 如果 proposal 的值 v 被選上，後面更高序列號的 proposal 值都是 v
+  有多個 proposal 被選上
+  確保後面選上的值都一樣
+
+  P2 已經確保只有一個值會被選上
+  如果需要被選上，值必須先被 accepter 接受，所以稍微修改 P2 來確保一定有 proposal 被選上
+
+P2改: 如果 proposal 的值 v 被選上，後面更高序列號，所有 accepter 接受的 proposal 值都是 v
+
+  由於訊息溝通是非同步的，有可能多數 accepter 選出值後，仍有 accepter c 還沒收到 proposal
+  範例：值已經被選上（取得多數），但可能還有少數偏遠的 accepter c 尚未收到 proposal
+        如果一個新的 proposer 剛復原，並且提出一個更高虛列號的不同的 proposal 給 c
+        P1 要求 c 接受這個值，便會違反 P2改
+  進一步強化 P2
+
+P2真：如果 proposal 的值 v 被選上，後面更高序列號，所有 proposer 提出的 proposal 值都是 v
+      P2真 -> P2改 -> P2
+
+重要的數學推導育證明:P
+
+P2完整定義：一個 proposal 值為 v 序列號 n 被提出，表示有一個集合 S 包含取得多數的 acceptors
+            一是： S 中沒有 accepter 接受任一個低於 n 的 proposal -- 多數方無任何接受
+            不然就是：n 之前，序列後最高（最近）且被 S 接受的 proposal，其值為 v -- v 為最新接受值
+
+為了實現 P2的完整定義，proposer 要提議第 n 號 proposal 之前，必須要先知道
+   小於 n 已經被多數 accepter 接受的（或是將要被多數 accepter 接受的），最高號碼的 proposal
+   預知未來很難，但限制過去條件比較簡單
+   直接限制 accepter 不能接受低於 n 的 proposal
+
+Proposer 運作算法：
+  發送 prepare 請求:
+    選擇 proposal 的 n，然後送 proposal 給某些 accepters 要求回覆
+      保證不會接受小於 n 的 proposal
+      詢問有無更高號
+        如果 accepter 之前已經接受高於 n 的 m 號 proposal 值 u （m>n)，回傳這筆 m 號的 proposal 
+  發送 accept 請求：
+    收集到多數 accepter 的 "prepare" 的回覆
+    一是：回覆的 accepter 都沒有高於 n 的 proposal
+      繼續傳送 n 號值 v
+    不然就是：收到更高號，改傳更高號的值
+      再次發送 proposal，序列號 n ，但值為回傳 proposal m 號的值 u
+
+Accepter 算法：
+  總是回覆 prepare 請求
+  沒發出保證前，可以接受任一 accept 請求
+  發出保證後，需要維持保證
+
+P1改: 唯有尚未回覆更高號（>n）的 prepare 請求時，才可接受下個 proposal n 號
+  P1改 -> P1
+
+再一點最佳化：
+  如果 accepter 已經回覆 prepare(>n,*)，下次收到 prepare 請求(n,*) 時則不接受（已經保證了）
+  原本總是回覆 prepare 請求，但這個(n,*）對此 accepter 已經逾期，永遠不會接受
+  accepter 直接忽略小於(n,*)的請求
+
+accepter 只要記住
+  已回覆 prepare 請求，目前見過最高號(n1,*)
+  已回覆 accept 請求，目前接受的最高號(n2,*)
+  為了維持 P2完整定義，這兩筆資料要能承受 accepter 失效重啟
+proposal 則可以忘記之前提出的 proposal，只要持續提出更高號即可
+
+總結：
+  proposer 傳送 prepare (n,*) 給一組多數 accepters
+  accepter 收到 prepare
+    比以前回覆的大 -> 保障不收更小的 proposal
+  proposer 收集到多數個 prepare 回覆
+    如果收到 (m,u) m>n，
+
+  
