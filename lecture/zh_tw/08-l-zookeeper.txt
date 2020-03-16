@@ -120,56 +120,56 @@ Znodes 的指令行為
     每個指令都依照先進先出（FIFO）順序
     sync 會等待所有前面的指令都傳遞（propagate）完成
 
-Check: can we just do this with lab 3's KV service?
-  flawed plan: GFS master on startup does Put("gfs-master", my-ip:port)
-    other applications + GFS nodes do Get("gfs-master")
-  problem: what if two master candidates' Put()s race?
-    later Put() wins
-    each presumed master needs to read the key to see if it actually is the master
-      when are we assured that no delayed Put() thrashes us?
-      every other client must have seen our Put() -- hard to guarantee
-  problem: when master fails, who decides to remove/update the KV store entry?
-    need some kind of timeout
-    so master must store tuple of (my-ip:port, timestamp)
-      and continuously Put() to refresh the timestamp
-      others poll the entry to see if the timestamp stops changing
-  lots of polling + unclear race behavior -- complex
-  ZooKeeper API has a better story: watches, sessions, atomic znode creation
-    + only one creation can succeed -- no Put() race
-    + sessions make timeouts easy -- no need to store and refresh explicit timestamps
-    + watches are lazy notifications -- avoids commiting lots of polling reads
+檢查：我們是否可以藉此完成 lab 3 的 KV 服務？
+  有缺陷的計畫：GFS master 在啟動時 Put("gfs-,aster", my-ip:port)
+    其他應用 + GFS node 執行 Get("gfs-master")
+  問題：如果兩個 master 候選的 Put()s race 呢
+    後者 Put 獲勝
+    每個 master 都需要讀取 key 值來確認自己真的是 master
+      然而我們何時才能確認後面沒有 Put() 了?
+      其他的客戶端都需要看到 master 的 Put() -- 這點很難保證
+  問題：當 master 失效後，誰能決定移除 / 更新 KV store 的值？
+    需要 timeout 機制
+    所以 master 要在儲存 (my-ip:port, timestamp) 的資料對
+      並且要持續地 Put() 來更新 timestamp
+      其他應用則要持續取得資料來確定 timestamp 有更新
+    很多 polling 加上不確定的 race 行為 -- 太複雜
+  Zookeeper API 有更好的歷程：watches, sessions, atomic znode creation
+    + 只有一個 creation 成功 -- 沒有 Put() race
+    + sessions 來作到 timeout -- 不用儲存/更新 timestamp
+    + watches 是 lazy 通知 -- 避免花費太多在一堆 polling 讀取上
 
-Ordering guarantees
-  all write operations are totally ordered
-    if a write is performed by ZooKeeper, later writes from other clients see it
-    e.g., two clients create a znode, ZooKeeper performs them in some total order
-  all operations are FIFO-ordered per client
-  implications:
-    a read observes the result of an earlier write from the same client
-    a read observes some prefix of the writes, perhaps not including most recent write
-      -> read can return stale data
-    if a read observes some prefix of writes, a later read observes that prefix too
+順序保證
+  所有 write 執行都是完全依序
+    如果 Zookeeper 執行 write，後面執行其他 write 的用戶端會看到前面的 write
+    e.g. 兩個客戶端 create znode，Zookeeper 會依序執行
+  每個 client 的所有執行都是 FIFO 順序
+  可推導：
+    一個 read 會看到同一個客戶端前一個 write 的結果
+    一個 read 會看見某部份的 writes，也許不是最近的 write（其他客戶端）
+      -> 一個 read 可能會回傳過時資料
+    如果一個 read 看見某部份的 writes，後面的 read 也會看見這些 writes
 
-Example "ready" znode:
-  A failure happens
-  A primary sends a stream of writes into Zookeeper
-    W1...Wn C(ready)
-  The final write updates ready znode
-    -> all preceding writes are visible
-  The final write causes the watch to go off at backup
-    backup issues R(ready) R1...Rn
-    however, it will observe all writes because zookeeper will delay read until
-      node has seen all txn that watch observed
-  Lets say failure happens during R1 .. Rn, say after return Rj to client
-    primary deletes ready file -> watch goes off
-    watch alert is sent to client
-    client knows it must issue new R(ready) R1 ...Rn
-  Nice property: high performance
-    pipeline writes and reads
-    can read from *any* zookeeper node
+範例 "ready" znode:
+  錯誤發生
+  一個 primary 傳送一個串流的 write 到 Zookeeper
+    W1 W2 ... Wn C(ready)
+  最後一個 write 更新 ready znode
+    -> 所有前面的 write 都可見
+  最後一個 write 導致 watch 開始備份
+    備份 issue R(ready) R1 R2...Rn
+    然而，笨份操作會看到所有的 writes，因為 Zookeeper 會延遲 read 直到
+      node 看見所有 watch 看過得 txn
+    假設錯誤發生在 R1..Rn，最後一筆成功回傳給客戶的是 Rj
+      primary 移除 ready 檔案 -> watch 啟動
+      watch 的警示傳送給客戶端
+      客戶端知道需要重新發送 R(ready) R1 ... Rn
+    好處：高效能
+      pipeline 讀取與寫入
+      可以從 *任意* Zookeeper node 讀取
 
-Example usage 1: slow lock
-  acquire lock:
+使用範例 1：slow lock
+  取得 lock：
    retry:
      r = create("app/lock", "", empheral)
      if r:
@@ -180,127 +180,127 @@ Example usage 1: slow lock
     watch_event:
        goto retry
 
-  release lock: (voluntarily or session timeout)
+  釋放 lock：(主動釋放或是 session timeout)
     delete("app/lock")
 
-Example usage 2: "ticket" locks
-  acquire lock:
-     n = create("app/lock/request-", "", empheral|sequential)
-   retry:
-     requests = getChildren(l, false)
-     if n is lowest znode in requests:
-       return
-     p = "request-%d" % n - 1
-     if exists(p, watch = True)
-       goto retry
+使用範例 2："ticket" locks
+  取得 lock：
+      n = create("app/lock/request-", "", empheral|sequential)
+    retry:
+      requests = getChildren(l, false)
+      if n is lowest znode in requests:
+        return
+      p = "request-%d" % n - 1
+      if exists(p, watch = True)
+        goto retry
 
     watch_event:
-       goto retry
+      goto retry
 
-  Q: can watch_even fire before lock it is the client's turn
-  A: yes
-     lock/request-10 <- current lock holder
-     lock/request-11 <- next one
-     lock/request-12 <- my request
+  問題：watch_even 可能會在客戶取得 lock 取得前觸發嗎？
+  答案：會
+     lock/request-10 <- 當前 lock 擁有者
+     lock/request-11 <- 下個擁有者
+     lock/request-12 <- 我的請求
 
-     if client associated with request-11 dies before it gets the lock, the
-     watch even will fire but it isn't my turn yet.
+     如果 request-11 的客戶取得 lock 前死了
+     watch_even 會觸發，在輪到我的請求之前
 
-Using locks
-  Not straight forward: a failure may cause your lock to be revoked
-    client 1 acquires lock
-      starts doing its stuff
-      network partitions
-      zookeeper declares client 1 dead (but it isn't)
-    client 2 acquires lock, but client 1 still believes it has it
-      can be avoided by setting timeouts correctly
+使用 locks
+  不直覺：一個錯誤可能造成你的 lock 被取消
+    客戶 1 取得 lock
+      做事情
+      網路分割
+      zookeeper 宣佈客戶 1 已死（但其實沒死）
+    客戶 2 取得 lock，但客戶 1 仍然覺得自己有 lock
+      如果 timeouts 正常的話可以避免
       need to disconnect client 1 session before ephemeral nodes go away
-      requires session heartbeats to be replicated to majority
-        N.B.: paper doesn't discuss this
-  For some cases, locks are a performance optimization
-    for example, client 1 has a lock on crawling some urls
+      需要 session 心跳複製到多數節點
+        N.B. 論文沒有討論這點
+  某些用例中，lock 其實是效能的優化
+    例如客戶 1 取得 lock 來執行某些 url 的爬蟲
     client will do it 2 now, but that is fine
-  For other cases, locks are a building block
-    for example, application uses it to build transaction
-    the transactions are all-or-nothing
-    we will see an example in the Frangipani paper
+  其他用例中，locks 來建造區塊
+    例如應用使用 lock 來產生 transaction
+    transaction 是全有或全無
+    我們會在 Frangipani 論文裡看到
 
-Zookeeper simplifies building applications but is not an end-to-end solution
-  Plenty of hard problems left for application to deal with
-  Consider using Zookeeper in GFS
-    I.e., replace master with Zookeeper
-  Application/GFS still needs all the other parts of GFS
-    the primary/backup plan for chunks
-    version numbers on chunks
-    protocol for handling primary fail over
+Zookeeper 簡化搭建應用，使用不是 end-to-end 的解決方案
+  很多難題留給應用端處理
+  思考在 GFS 中使用 Zookeeper
+    I.e. 把 GFS 的 master 換成 Zookeeper
+  應用/GFS 仍然需要其他 GFS 的元件
+    chunk 的 primary/備份計畫
+    chunk 的 version number
+    處理 primary failover 的協定
     etc.
-  With Zookeeper, at least master is fault tolerant
-    And, won't run into split-brain problem
-    Even though it has replicated servers
+  使用 Zookeeper 至少 master 是可容錯的
+    而且不會造成多頭馬車
+    就算有多台複本伺服器
 
-Implementation overview
-  Similar to lab 3 (see last lecture)
-  two layers:
-    ZooKeeper services  (K/V service)
-    ZAB layer (Raft layer)
-  Start() to insert ops in bottom layer
-  Some time later ops pop out of bottom layer on each replica
-    These ops are committed in the order they pop out
-    on apply channel in lab 3
-    the abdeliver() upcall in ZAB
+實做概觀
+  類似 lab 3
+  兩層：
+    Zookeeper 服務 (K/V 服務)
+    ZAB 層 (Raft 層)
+  Start() 來 insert ops 到底層
+  有時候 ops 會在每個複本上 pop out
+    這些 ops 依照 pop out 順序 commit
+    在 lab 3 的 apply channel
+    在 ZAB 裡 abdelver() upcall
 
-Challenge: Duplicates client requests
-  Scenario
-    Primary receives client request, fails
-    Client resends client request to new primary
+挑戰：重複的客戶端請求
+  情境
+    Primary 收到客戶端請求，然後失效
+    客戶端重送請求到新的 primary
   Lab 3:
-    Table to detect duplicates
-    Limitation: one outstanding op per client
-    Problem problem: cannot pipeline client requests
-  Zookeeper:
-    Some ops are idempotent period
-    Some ops are easy to make idempotent
-      test-version-and-then-do-op
-      e.g., include timestamp and version in setDataTXN
+    Table 來觀察重複
+    限制：每個客戶同時只有一個 outstanding op
+    問題：不能 pipeline 客戶請求
+  Zookeeper：
+    有些 ops 是 idempotent period
+    有些 ops 很容易變成 idenpotent
+      檢查版本然後再執行
+      e.g. 把 timestamp 與版本號加到 setDataTXN
 
-Challenge: Read operations
-  Many operations are read operations
-    they don't modify replicated state
-  Must they go through ZAB/Raft or not?
-  Can any replica execute the read op?
-  Performance is slow if read ops go through Raft
+挑戰：讀取操作
+  很多操作都是讀取操作
+    不更改 replicated state
+  這些操作要通過 ZAB/Raft 層嗎？
+  複本可以直接執行 read 操作嗎？
+  如果讀取都經過 Raft，效能會很慢
 
-Problem: read may return stale data if only master performs it
-  The primary may not know that it isn't the primary anymore
-    a network partition causes another node to become primary
-    that partition may have processed write operations
-  If the old primary serves read operations, it won't have seen those write ops
-   => read returns stale data
+問題：讀取可能會讀到過期資料，只有 master 執行的話
+  primary 可能會不知道自己不再是 primary 了
+    網路分割導致其他 node 變成 primary
+    另外的分割可能會際遇執行寫入操作
+  如果舊的 primary 繼續服務讀取操作，就看不到另外一邊的寫入操作
+    => 回傳過期資料
 
-Zookeeper solution: don't promise non-stale data (by default)
-  Reads are allowed to return stale data
-    Reads can be executed by any replica
-    Read throughput increases as number of servers increases
-    Read returns the last zxid it has seen
-     So that new primary can catch up to zxid before serving the read
-     Avoids reading from past
-  Only sync-read() guarantees data is not stale
+Zookeeper 的解法：（預設）不保證 non-stale 資料
+  讀取允許回傳逾期資料
+    所有複本都可以執行讀取
+    讀取的輸出隨服務棄數量增加
+    讀取會回傳見過的最後一個 zxid
+      新的 primary 會知道要追上 zxid 的進度，然後才開始接受讀取
+      避免讀取舊節點
+    只有 sync-read() 保證資料不是陳舊的
 
-Sync optimization: avoid ZAB layer for sync-read
-  must ensure that read observes last committed txn
-  leader puts sync in queue between it and replica
-    if ops ahead of in the queue commit, then leader must be leader
-    otherwise, issue null transaction
-  in same spirit read optimization in Raft paper
-    see last par section 8 of raft paper
+Sync 操作：避免 sync-read 通過 ZAB 層
+  必須確保 read 有看到最後 commit 的 txn
+  leader 在自己與複本上放 sync 到工作佇列
+    如果操作是在工作佇列 commit 前面，leader 就仍然是 leader
+    否則就發出 null transaction
+  與 Raft 論文的讀取操作，精神相同
+    看 Raft 論文 section 8 的最後一部分
 
-Performance (see table 1)
-  Reads inexpensive
-    Q: Why more reads as servers increase?
-  Writes expensive
-    Q: Why slower with increasing number of servers?
-  Quick failure recovery (figure 8)
-    Decent throughout even while failures happen
+效能（看 table 1)
+  讀取很便宜
+    問題：為何讀取效能隨服務器數量增加？
+  寫入很貴：
+    問題：為何寫入效能隨服務企數量下降？
+  快速錯誤復原（figure 8)
+    錯誤發生時仍有很棒的輸出
 
 References:
   ZAB: http://dl.acm.org/citation.cfm?id=2056409
